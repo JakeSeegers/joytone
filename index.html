@@ -1,0 +1,2401 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DAW</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden;background:#111;color:#ccc;font:13px/1.4 'Segoe UI',system-ui,sans-serif}
+
+/* ── LAYOUT ─────────────────────────────────────────────────────── */
+#app{display:flex;flex-direction:column;height:100vh}
+
+/* Transport */
+#transport{
+  display:flex;align-items:center;gap:8px;padding:6px 10px;
+  background:#1a1a22;border-bottom:1px solid #333;flex-shrink:0;
+  flex-wrap:wrap;min-height:42px
+}
+#transport .sep{width:1px;height:22px;background:#333;margin:0 2px}
+
+/* Master controls strip */
+#master-strip{
+  display:flex;align-items:center;gap:12px;padding:4px 10px;
+  background:#13131a;border-bottom:1px solid #252530;flex-shrink:0;
+  flex-wrap:wrap;min-height:30px
+}
+#master-strip .mc-group{display:flex;align-items:center;gap:5px}
+#master-strip label{font-size:10px;color:#666;white-space:nowrap}
+#master-strip input[type=range]{width:72px;height:3px;accent-color:#5566cc;cursor:pointer}
+#master-strip .mc-val{font-size:10px;color:#888;min-width:28px;text-align:right}
+
+/* Section strip */
+#section-strip{
+  display:flex;align-items:center;gap:6px;padding:4px 10px;
+  background:#161620;border-bottom:1px solid #2a2a35;flex-shrink:0;
+  min-height:34px
+}
+#section-strip .lbl{color:#666;font-size:11px;white-space:nowrap}
+#section-tabs{display:flex;gap:4px}
+
+/* DAW main area */
+#daw-main{display:flex;flex:1;overflow:hidden;min-height:0}
+
+/* Track headers */
+#track-panel{
+  width:210px;min-width:150px;flex-shrink:0;
+  display:flex;flex-direction:column;
+  background:#181820;border-right:1px solid #2a2a35;overflow:hidden
+}
+#track-panel-ruler{height:24px;background:#141418;border-bottom:1px solid #2a2a35;flex-shrink:0}
+#track-list{flex:1;overflow-y:auto;overflow-x:hidden}
+#track-list::-webkit-scrollbar{width:4px}
+#track-list::-webkit-scrollbar-thumb{background:#333}
+#btn-add-track{
+  margin:6px;padding:5px 10px;background:#252535;border:1px dashed #444;
+  border-radius:4px;color:#888;cursor:pointer;font-size:12px;text-align:center
+}
+#btn-add-track:hover{background:#2a2a3a;color:#aaa}
+
+/* Piano roll area */
+#roll-area{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
+
+/* Canvas container */
+#canvas-wrap{
+  position:relative;flex:1;overflow:hidden;min-height:0;
+  background:#1e1e28;cursor:crosshair
+}
+#canvas-wrap canvas{position:absolute;top:0;left:0;display:block}
+#grid-canvas{pointer-events:none}
+#note-canvas{z-index:2}
+
+/* Status bar */
+#status-bar{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:3px 10px;background:#111118;border-top:1px solid #222;
+  flex-shrink:0;font-size:11px;color:#666;min-height:22px
+}
+#zoom-controls{display:flex;align-items:center;gap:4px}
+
+/* ── BUTTONS ─────────────────────────────────────────────────────── */
+button{
+  padding:4px 10px;border:1px solid #383848;border-radius:4px;
+  background:#252535;color:#bbb;cursor:pointer;font-size:12px;
+  white-space:nowrap;transition:background .1s
+}
+button:hover{background:#2e2e42}
+button:active{background:#333355}
+button.active,button.on{background:#3d3d6e;border-color:#5555aa;color:#ddf}
+button.danger:hover{background:#4a1a1a;border-color:#aa3333}
+
+/* Transport specific */
+#btn-play{border-color:#2a5a2a;background:#1e3e1e;color:#7f7}
+#btn-play:hover{background:#253e25}
+#btn-play.playing{background:#3a1e1e;border-color:#5a2a2a;color:#f77}
+#btn-stop{border-color:#4a3a1a;background:#2e2414}
+#btn-stop:hover{background:#3a2d18}
+
+/* Tool buttons */
+.tool-btn{padding:4px 8px;font-size:13px}
+.tool-btn.active{background:#3d3d6e;border-color:#5555aa}
+
+/* Section tabs */
+.sec-tab{
+  display:inline-flex;align-items:center;gap:5px;
+  padding:3px 8px 3px 12px;border:1px solid #333;border-radius:3px;
+  background:#1e1e28;cursor:pointer;font-size:12px;font-weight:600
+}
+.sec-tab.active{background:#2d2d50;border-color:#4444aa;color:#aaf}
+.sec-tab:hover:not(.active){background:#252535}
+.sec-del{
+  font-size:14px;line-height:1;color:#666;padding:0 1px;
+  border-radius:2px;cursor:pointer
+}
+.sec-del:hover{color:#f88;background:rgba(255,80,80,.15)}
+
+/* ── TRACK HEADER CARD ───────────────────────────────────────────── */
+.track-card{
+  border-bottom:1px solid #222230;padding:4px 6px;
+  display:flex;flex-direction:column;gap:3px;cursor:default
+}
+.track-card.selected{background:#1e1e30}
+.track-row1{display:flex;align-items:center;gap:4px}
+.track-color-swatch{width:10px;height:28px;border-radius:2px;flex-shrink:0;cursor:pointer}
+.track-name{
+  flex:1;background:transparent;border:none;color:#ccc;font-size:12px;
+  padding:2px 3px;border-radius:2px;min-width:0
+}
+.track-name:focus{background:#252535;outline:1px solid #444;color:#eee}
+.track-btn{
+  padding:2px 5px;font-size:10px;border-radius:3px;line-height:1.4;min-width:28px
+}
+.track-btn.muted{background:#4a2020;border-color:#883333;color:#f88}
+.track-btn.soloed{background:#2a4a1a;border-color:#44aa22;color:#8f8}
+.track-row2{display:flex;align-items:center;gap:4px}
+.track-inst-sel{
+  flex:1;background:#1e1e28;border:1px solid #333;color:#bbb;
+  font-size:11px;padding:2px 4px;border-radius:3px;min-width:0
+}
+.track-inst-sel:focus{outline:1px solid #555}
+.vol-slider{
+  width:56px;height:3px;accent-color:#5566cc;cursor:pointer
+}
+.track-row3{display:flex;align-items:center;gap:4px}
+.rev-slider{width:50px;height:3px;accent-color:#336655;cursor:pointer}
+.fx-toggle{font-size:10px;padding:2px 5px;border-radius:3px}
+
+/* Per-track effects panel */
+.track-fx{
+  padding:5px 6px;background:#141420;border-bottom:1px solid #1a1a28;
+  display:none;flex-direction:column;gap:4px
+}
+.track-fx.open{display:flex}
+.fx-row{display:flex;align-items:center;gap:5px;font-size:10px;color:#888}
+.fx-row label{width:54px;flex-shrink:0}
+.fx-slider{flex:1;height:3px;accent-color:#4455bb;cursor:pointer}
+
+/* ── FORM INPUTS ─────────────────────────────────────────────────── */
+select{
+  background:#1e1e28;border:1px solid #333;color:#bbb;
+  padding:3px 6px;border-radius:4px;font-size:12px;cursor:pointer
+}
+select:focus{outline:1px solid #555}
+input[type=number]{
+  background:#1e1e28;border:1px solid #333;color:#ccc;
+  padding:3px 6px;border-radius:4px;font-size:12px;width:60px;text-align:center
+}
+input[type=number]:focus{outline:1px solid #555}
+input[type=range]{cursor:pointer}
+
+/* ── DRAG OVERLAY ────────────────────────────────────────────────── */
+#drop-overlay{
+  display:none;position:fixed;inset:0;background:rgba(0,0,80,.7);
+  z-index:999;align-items:center;justify-content:center;
+  font-size:28px;color:#aaf;border:4px dashed #446;
+  pointer-events:none
+}
+#drop-overlay.visible{display:flex}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- ── TRANSPORT ────────────────────────────────────────────────── -->
+  <div id="transport">
+    <button id="btn-play" title="Play / Pause (Space)">▶ Play</button>
+    <button id="btn-stop" title="Stop">■</button>
+    <div class="sep"></div>
+    <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:#888">
+      BPM <input type="number" id="bpm-input" value="120" min="20" max="400" step="1">
+    </label>
+    <span id="playhead-time" style="font-size:11px;color:#666;min-width:40px">0:00</span>
+    <div class="sep"></div>
+    <!-- Tools -->
+    <button class="tool-btn active" id="tool-pencil" title="Draw notes (D)">✏</button>
+    <button class="tool-btn" id="tool-pointer" title="Select / Move (S)">⟡</button>
+    <button class="tool-btn" id="tool-eraser" title="Erase (E)">⌫</button>
+    <div class="sep"></div>
+    <!-- Quantize -->
+    <label style="font-size:11px;color:#888">Q:</label>
+    <select id="quant-sel" title="Quantization">
+      <option value="1">1/4</option>
+      <option value="0.5" selected>1/8</option>
+      <option value="0.25">1/16</option>
+      <option value="0.125">1/32</option>
+      <option value="0">Free</option>
+    </select>
+    <div class="sep"></div>
+    <button id="btn-undo" title="Undo (Ctrl+Z)" disabled>↩ Undo</button>
+    <div class="sep"></div>
+    <button id="btn-export-midi" title="Export MIDI">⬇ MIDI</button>
+    <button id="btn-import-midi" title="Import MIDI file">⬆ MIDI</button>
+    <input type="file" id="midi-file-input" accept=".mid,.midi" style="display:none">
+    <button id="btn-export-wav" title="Bounce to WAV">⬇ WAV</button>
+    <div class="sep"></div>
+    <button id="btn-load-demo" title="Load demo song">★ Demo</button>
+    <button id="btn-reset" title="Clear saved state and start fresh" style="color:#f88">⊘ Reset</button>
+  </div>
+
+  <!-- ── MASTER CONTROLS ─────────────────────────────────────────── -->
+  <div id="master-strip">
+    <div class="mc-group">
+      <label>VOL</label>
+      <input type="range" id="mc-vol" min="0" max="1" step="0.01" value="0.7">
+      <span class="mc-val" id="mc-vol-val">0.7</span>
+    </div>
+    <div class="mc-group">
+      <label>BASS</label>
+      <input type="range" id="mc-bass" min="-12" max="12" step="0.5" value="0">
+      <span class="mc-val" id="mc-bass-val">0 dB</span>
+    </div>
+    <div class="mc-group">
+      <label>COMP</label>
+      <input type="range" id="mc-comp" min="-40" max="0" step="1" value="-18">
+      <span class="mc-val" id="mc-comp-val">−18</span>
+    </div>
+    <div class="mc-group">
+      <label>HISS</label>
+      <input type="range" id="mc-hiss" min="0" max="0.025" step="0.001" value="0.004">
+      <span class="mc-val" id="mc-hiss-val">low</span>
+    </div>
+  </div>
+
+  <!-- ── SECTION STRIP ────────────────────────────────────────────── -->
+  <div id="section-strip">
+    <span class="lbl">Section:</span>
+    <div id="section-tabs"><!-- filled by JS --></div>
+    <button id="btn-add-section" style="padding:2px 8px;font-size:11px">+ Add</button>
+    <div class="sep"></div>
+    <span class="lbl">Play&nbsp;order:</span>
+    <div id="section-order" style="display:flex;gap:4px;align-items:center;font-size:11px;color:#aaa">
+      <!-- filled by JS -->
+    </div>
+  </div>
+
+  <!-- ── MAIN ─────────────────────────────────────────────────────── -->
+  <div id="daw-main">
+
+    <!-- Track headers -->
+    <div id="track-panel">
+      <div id="track-panel-ruler"></div>
+      <div id="track-list"></div>
+      <button id="btn-add-track">+ Add Track</button>
+    </div>
+
+    <!-- Piano roll -->
+    <div id="roll-area">
+      <div id="canvas-wrap">
+        <canvas id="grid-canvas"></canvas>
+        <canvas id="note-canvas"></canvas>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Status bar -->
+  <div id="status-bar">
+    <span id="status-msg">Drop a .mid file anywhere to import · Space = play/pause · D/S/E = draw/select/erase</span>
+    <div id="zoom-controls">
+      <button onclick="zoomOut()" style="padding:1px 7px;font-size:14px" title="Zoom out (-)">−</button>
+      <span id="zoom-label" style="font-size:11px;width:70px;text-align:center">80 px/beat</span>
+      <button onclick="zoomIn()" style="padding:1px 7px;font-size:14px" title="Zoom in (+)">+</button>
+    </div>
+  </div>
+
+</div><!-- #app -->
+
+<!-- MIDI drop overlay -->
+<div id="drop-overlay">Drop MIDI file to import</div>
+
+<script>
+'use strict';
+// ═══════════════════════════════════════════════════════════════════
+//  DAW — single-file browser DAW using Web Audio API
+// ═══════════════════════════════════════════════════════════════════
+
+// ── CONSTANTS ──────────────────────────────────────────────────────
+const KEYS_WIDTH  = 52;   // px — piano keyboard sidebar
+const RULER_H     = 24;   // px — time ruler height
+const ROW_H       = 14;   // px default row height (one semitone)
+const MIDI_MIN    = 21;   // A0
+const MIDI_MAX    = 108;  // C8
+const LOOKAHEAD   = 0.1;  // seconds scheduler looks ahead
+const SCHED_MS    = 25;   // scheduler interval ms
+const PPQ         = 480;  // pulses per quarter note
+
+const INSTRUMENTS = [
+  {id:'bell',    label:'Bell'},
+  {id:'marimba', label:'Marimba'},
+  {id:'pluck',   label:'Pluck'},
+  {id:'bass',    label:'Bass Drone'},
+  {id:'organ',   label:'Organ'},
+  {id:'piano',   label:'Piano'},
+  {id:'guitar',  label:'Guitar'},
+  {id:'flute',   label:'Flute'},
+  {id:'synth',   label:'Synth'},
+  {id:'kick',    label:'Kick'},
+  {id:'snare',   label:'Snare'},
+  {id:'hat',     label:'Hat'},
+];
+
+const TRACK_COLORS = [
+  '#7c6aff','#ff6b6b','#4fc3f7','#81c784',
+  '#ffb74d','#f06292','#4db6ac','#ff8a65',
+  '#ba68c8','#aed581','#4dd0e1','#ffd54f',
+];
+
+const BLACK_NOTES = new Set([1,3,6,8,10]);
+
+// ── DEFAULT STRUCTURES ─────────────────────────────────────────────
+const DEFAULT_FX = () => ({
+  reverbMix:0.2, reverbDecay:2.0,
+  delayMix:0.0,  delayTime:0.375, delayFeedback:0.35,
+  filterType:'bandpass', filterCutoff:1500, filterRes:0.5,
+  lfoDepth:0.0,  lfoRate:1.0,
+  wowDepth:0.003,                     // wow/flutter: ~0.3% pitch deviation
+  distDrive:0.08, distMix:0.07,       // subtle always-on tape saturation
+});
+
+// Per-instrument filter profile overrides (lo-fi character)
+const INST_FILTER = {
+  kick:  { filterType:'lowpass',  filterCutoff:300,  filterRes:0.7  },
+  snare: { filterType:'bandpass', filterCutoff:2200, filterRes:0.8  },
+  hat:   { filterType:'highpass', filterCutoff:4000, filterRes:0.5  },
+  bass:  { filterType:'lowpass',  filterCutoff:600,  filterRes:0.7  },
+  organ: { filterType:'bandpass', filterCutoff:1200, filterRes:0.45 },
+};
+
+const DEFAULT_MASTER_FX = () => ({
+  compThreshold:-18, compRatio:6, compMakeup:0,
+  bassGain:0, bassFreq:120,
+  masterVolume:0.7,
+  hissLevel:0.004,
+});
+
+// ── STATE ──────────────────────────────────────────────────────────
+let project = null;           // the active project object
+let activeSectionId = 'A';    // which section is shown in piano roll
+
+// Audio
+let audioCtx      = null;
+let masterBus     = null;     // GainNode — compressor chain end → here
+let sharedReverb  = null;     // ConvolverNode
+let sharedDelay   = null;     // DelayNode
+let reverbReturn  = null;     // GainNode
+let delayReturn   = null;     // GainNode
+let compressor    = null;
+let outputLimiter = null;
+let noiseBuffer   = null;
+let hissGainNode  = null;  // tape hiss master volume — muted when stopped
+let bassBoost     = null;  // low-shelf EQ on master bus
+const trackEngines = {};      // trackId → TrackEngine instance
+
+// Scheduler
+let schedInterval  = null;
+let isPlaying      = false;
+let playStartCtxTime = 0;     // audioCtx.currentTime when play pressed
+let playStartBeat    = 0;     // beat position at play press
+let scheduleCursor   = 0;     // beat position of scheduler lookahead cursor
+let currentSectionPlayIdx = 0;// index into project.sectionOrder
+let sectionBeatOffset = 0;    // beat offset where current section started
+
+// Piano roll view
+const PR = {
+  pixelsPerBeat : 80,
+  scrollBeat    : 0,    // beat offset (horizontal scroll)
+  scrollPitchPx : 0,    // pixel offset (vertical scroll)
+  rowHeight     : ROW_H,
+  dirty         : true,
+  gridDirty     : true,
+  width         : 0,
+  height        : 0,
+};
+
+// Interaction
+let activeTool = 'pencil';  // 'pencil' | 'pointer' | 'eraser'
+let quantSnap  = 0.5;       // beats
+let dragState  = null;      // current drag operation
+let mouseDownNote = null;
+
+// Undo
+const undoStack = [];
+const UNDO_LIMIT = 40;
+
+// ── UTILITIES ──────────────────────────────────────────────────────
+let _idCounter = 0;
+function uid() { return 'n' + (++_idCounter) + '_' + Math.random().toString(36).slice(2,6); }
+
+function midiToHz(m)  { return 440 * Math.pow(2, (m - 69) / 12); }
+function beatToSec(b) { return b * 60 / project.tempo; }
+function secToBeat(s) { return s * project.tempo / 60; }
+
+function snapBeat(b, q) {
+  if (!q) return b;
+  return Math.round(b / q) * q;
+}
+function clamp(v,lo,hi){ return v<lo?lo:v>hi?hi:v; }
+
+function isBlack(m) { return BLACK_NOTES.has(m % 12); }
+
+function noteLabel(m) {
+  const names = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+  return names[m % 12] + (Math.floor(m/12)-1);
+}
+
+function lighten(hex, amt) {
+  let n = parseInt(hex.slice(1),16);
+  let r = clamp(((n>>16)&0xff)+amt,0,255);
+  let g = clamp(((n>>8)&0xff)+amt,0,255);
+  let b = clamp((n&0xff)+amt,0,255);
+  return '#'+[r,g,b].map(x=>x.toString(16).padStart(2,'0')).join('');
+}
+
+function roundRect(ctx,x,y,w,h,r){
+  r = Math.min(r, w/2, h/2);
+  ctx.beginPath();
+  ctx.moveTo(x+r,y);
+  ctx.lineTo(x+w-r,y); ctx.arcTo(x+w,y,x+w,y+r,r);
+  ctx.lineTo(x+w,y+h-r); ctx.arcTo(x+w,y+h,x+w-r,y+h,r);
+  ctx.lineTo(x+r,y+h); ctx.arcTo(x,y+h,x,y+h-r,r);
+  ctx.lineTo(x,y+r); ctx.arcTo(x,y,x+r,y,r);
+  ctx.closePath();
+}
+
+function setStatus(msg, isErr) {
+  const el = document.getElementById('status-msg');
+  el.textContent = msg;
+  el.style.color = isErr ? '#f88' : '#888';
+  if (!isErr) setTimeout(() => { if (el.textContent===msg) el.style.color=''; }, 4000);
+}
+
+// ── DATA MODEL ─────────────────────────────────────────────────────
+function makeTrack(overrides={}) {
+  const idx = Object.keys(
+    project ? (project.sections[activeSectionId]?.tracks||{}) : {}
+  ).length;
+  return {
+    id: uid(),
+    label: `Track ${idx+1}`,
+    instrument: INSTRUMENTS[idx % (INSTRUMENTS.length-3)].id,
+    color: TRACK_COLORS[idx % TRACK_COLORS.length],
+    volume: 0.8,
+    muted: false,
+    soloed: false,
+    reverbSend: 0.2,
+    notes: [],
+    effects: { ...DEFAULT_FX(), ...(INST_FILTER[overrides.instrument] || {}) },
+    ...overrides
+  };
+}
+
+function makeNote(beatStart, midiNote, duration=0.5, velocity=100) {
+  return { id: uid(), beatStart, duration, midiNote, velocity };
+}
+
+function makeSection(id) {
+  return {
+    id, label: id, lengthBars: 2,
+    tracks: {},
+  };
+}
+
+function makeProject(overrides={}) {
+  const secA = makeSection('A');
+  return {
+    version: 2,
+    title: 'Untitled',
+    tempo: 120,
+    sectionOrder: ['A'],
+    sections: { A: secA },
+    masterFx: DEFAULT_MASTER_FX(),
+    ...overrides,
+  };
+}
+
+// Deep-clone serializable data (no audio nodes)
+function cloneData(x) { return JSON.parse(JSON.stringify(x)); }
+
+// Get all tracks shared across sections (by id) — returns tracks from active section
+function activeTracks() {
+  return project.sections[activeSectionId]?.tracks || {};
+}
+
+// ── UNDO ───────────────────────────────────────────────────────────
+function pushUndo() {
+  undoStack.push(cloneData({ project, activeSectionId }));
+  if (undoStack.length > UNDO_LIMIT) undoStack.shift();
+  document.getElementById('btn-undo').disabled = false;
+}
+
+function performUndo() {
+  if (!undoStack.length) return;
+  const snap = undoStack.pop();
+  project = snap.project;
+  activeSectionId = snap.activeSectionId;
+  if (!undoStack.length) document.getElementById('btn-undo').disabled = true;
+  rebuildEngines();
+  renderTrackHeaders();
+  renderSectionUI();
+  PR.gridDirty = true; PR.dirty = true; schedRedraw();
+  setStatus('Undo');
+}
+
+// ── PERSISTENCE ────────────────────────────────────────────────────
+function saveProject() {
+  try { localStorage.setItem('daw-v2', JSON.stringify({ project, activeSectionId })); }
+  catch(e) {}
+}
+
+function loadSaved() {
+  try {
+    const raw = localStorage.getItem('daw-v2');
+    if (!raw) return false;
+    const data = JSON.parse(raw);
+    project = data.project;
+    // Migrate older saves that pre-date masterFx (fill in any missing keys)
+    project.masterFx = { ...DEFAULT_MASTER_FX(), ...(project.masterFx || {}) };
+    activeSectionId = data.activeSectionId || project.sectionOrder[0];
+    return true;
+  } catch(e) { return false; }
+}
+
+// ── AUDIO INIT ─────────────────────────────────────────────────────
+async function ensureAudio() {
+  if (audioCtx) {
+    if (audioCtx.state === 'suspended') await audioCtx.resume();
+    return;
+  }
+  const AC = window.AudioContext || window.webkitAudioContext;
+  audioCtx = new AC();
+
+  noiseBuffer = createNoiseBuffer(audioCtx);
+
+  // Master bus chain: trackGains → sharedReverb/Delay → compressor → limiter → dest
+  sharedReverb = audioCtx.createConvolver();
+  sharedReverb.buffer = buildReverbIR(audioCtx, 2.0);
+
+  sharedDelay = audioCtx.createDelay(2.0);
+  sharedDelay.delayTime.value = 0.375;
+  const delayFB = audioCtx.createGain(); delayFB.gain.value = 0.35;
+  sharedDelay.connect(delayFB); delayFB.connect(sharedDelay);
+
+  reverbReturn = audioCtx.createGain(); reverbReturn.gain.value = 0.5;
+  delayReturn  = audioCtx.createGain(); delayReturn.gain.value  = 0.4;
+  sharedReverb.connect(reverbReturn);
+  sharedDelay.connect(delayReturn);
+
+  // Reverb HP filter (prevents mud)
+  const rvHp = audioCtx.createBiquadFilter();
+  rvHp.type = 'highpass'; rvHp.frequency.value = 180;
+  reverbReturn.connect(rvHp);
+
+  compressor = audioCtx.createDynamicsCompressor();
+  compressor.threshold.value = -18; compressor.ratio.value = 6;
+  compressor.knee.value = 8; compressor.attack.value = 0.003; compressor.release.value = 0.15;
+
+  outputLimiter = audioCtx.createDynamicsCompressor();
+  outputLimiter.threshold.value = -3; outputLimiter.ratio.value = 20;
+  outputLimiter.knee.value = 0; outputLimiter.attack.value = 0.001; outputLimiter.release.value = 0.05;
+
+  masterBus = audioCtx.createGain();
+  masterBus.gain.value = project.masterFx.masterVolume;
+
+  // Bass boost (low-shelf EQ) sits between masterBus and compressor
+  bassBoost = audioCtx.createBiquadFilter();
+  bassBoost.type = 'lowshelf';
+  bassBoost.frequency.value = project.masterFx.bassFreq;
+  bassBoost.gain.value      = project.masterFx.bassGain;
+
+  rvHp.connect(bassBoost);
+  delayReturn.connect(bassBoost);
+  masterBus.connect(bassBoost);
+  bassBoost.connect(compressor);
+  compressor.connect(outputLimiter);
+  outputLimiter.connect(audioCtx.destination);
+
+  // Tape hiss routes AFTER compressor so loud notes don't pump it
+  startTapeHiss(audioCtx, outputLimiter);
+  // Procedural crackles go to the same post-comp point
+  startCrackleEngine(audioCtx, outputLimiter);
+}
+
+// Procedural vinyl crackles — random micro-impulses, mid-focused bandpass
+// 20% chance every ~900ms with jitter, simulates dust on vinyl
+function startCrackleEngine(ctx, dest) {
+  function schedNext() {
+    const wait = 600 + Math.random() * 700; // 600–1300 ms
+    setTimeout(() => {
+      if (Math.random() < 0.22) {
+        const t = ctx.currentTime + Math.random() * 0.05; // up to 50ms future offset
+        const dur = 0.005 + Math.random() * 0.008;        // 5–13ms impulse
+        const fq  = 1200 + Math.random() * 2400;          // 1200–3600 Hz bandpass
+        noiseBurst(ctx, dest, t, dur, 'bandpass', fq, 1.5, 0.03 + Math.random()*0.04);
+      }
+      schedNext();
+    }, wait);
+  }
+  schedNext();
+}
+
+// Tape hiss — white noise bandpassed into the 1.2–8 kHz "air" range.
+// Starts silent; fades in when playback starts, fades out when stopped.
+function startTapeHiss(ctx, dest) {
+  const src = ctx.createBufferSource();
+  src.buffer = noiseBuffer;
+  src.loop = true;
+
+  // High-pass to cut the rumble below ~1.2 kHz
+  const hp = ctx.createBiquadFilter();
+  hp.type = 'highpass';
+  hp.frequency.value = 1200;
+  hp.Q.value = 0.5;
+
+  // Low-pass to soften anything above ~8 kHz
+  const lp = ctx.createBiquadFilter();
+  lp.type = 'lowpass';
+  lp.frequency.value = 8000;
+  lp.Q.value = 0.5;
+
+  hissGainNode = ctx.createGain();
+  hissGainNode.gain.value = 0; // starts silent; fades in on play
+
+  src.connect(hp);
+  hp.connect(lp);
+  lp.connect(hissGainNode);
+  hissGainNode.connect(dest);
+  src.start();
+}
+
+// ── TRACK ENGINE ───────────────────────────────────────────────────
+class TrackEngine {
+  constructor(track) {
+    const ctx = audioCtx;
+    this.trackId = track.id;
+
+    this.trackGain = ctx.createGain();
+    this.trackGain.gain.value = track.muted ? 0 : track.volume;
+
+    this.filter = ctx.createBiquadFilter();
+    this.filter.type = track.effects.filterType || 'bandpass';
+    this.filter.frequency.value = track.effects.filterCutoff;
+    this.filter.Q.value = track.effects.filterRes;
+
+    this.lfo = ctx.createOscillator();
+    this.lfoGain = ctx.createGain();
+    this.lfo.type = 'sine';
+    this.lfo.frequency.value = Math.max(0.01, track.effects.lfoRate);
+    this.lfoGain.gain.value = track.effects.lfoDepth * track.effects.filterCutoff * 0.5;
+    this.lfo.connect(this.lfoGain);
+    this.lfoGain.connect(this.filter.frequency);
+    this.lfo.start();
+
+    // Tanh soft-clipper (tape saturation) — always active at low drive
+    this.saturator     = ctx.createWaveShaper();
+    this.saturator.curve = buildDistCurve(track.effects.distDrive || 0.08);
+    this.saturator.oversample = '2x';
+    this.saturatorDry  = ctx.createGain(); this.saturatorDry.gain.value  = 1 - (track.effects.distMix||0.07);
+    this.saturatorWet  = ctx.createGain(); this.saturatorWet.gain.value  = track.effects.distMix||0.07;
+
+    this.dryGain   = ctx.createGain(); this.dryGain.gain.value = 1;
+    this.rvSend    = ctx.createGain(); this.rvSend.gain.value = track.reverbSend * track.effects.reverbMix;
+    this.dlySend   = ctx.createGain(); this.dlySend.gain.value = track.effects.delayMix;
+
+    // satBus merges dry+wet saturator paths before going to out splits
+    this.satBus = ctx.createGain(); this.satBus.gain.value = 1;
+
+    // Wire: trackGain → filter → (dry path + saturated path) → satBus → [dry, rv, dly sends]
+    this.trackGain.connect(this.filter);
+    this.filter.connect(this.saturatorDry);
+    this.filter.connect(this.saturator);
+    this.saturator.connect(this.saturatorWet);
+    this.saturatorDry.connect(this.satBus);
+    this.saturatorWet.connect(this.satBus);
+    this.satBus.connect(this.dryGain);
+    this.satBus.connect(this.rvSend);
+    this.satBus.connect(this.dlySend);
+    this.dryGain.connect(masterBus);
+    this.rvSend.connect(sharedReverb);
+    this.dlySend.connect(sharedDelay);
+  }
+
+  dest() { return this.trackGain; }
+
+  apply(track) {
+    const anySolo = Object.values(activeTracks()).some(t => t.soloed);
+    const vol = track.muted ? 0 : (anySolo && !track.soloed ? 0 : track.volume);
+    this.trackGain.gain.setTargetAtTime(vol, audioCtx.currentTime, 0.01);
+    this.filter.type = track.effects.filterType || 'bandpass';
+    this.filter.frequency.setTargetAtTime(track.effects.filterCutoff, audioCtx.currentTime, 0.02);
+    this.filter.Q.value = track.effects.filterRes;
+    this.lfo.frequency.value = Math.max(0.01, track.effects.lfoRate);
+    this.lfoGain.gain.setTargetAtTime(
+      track.effects.lfoDepth * track.effects.filterCutoff * 0.5,
+      audioCtx.currentTime, 0.02
+    );
+    this.rvSend.gain.setTargetAtTime(track.reverbSend * track.effects.reverbMix, audioCtx.currentTime, 0.02);
+    this.dlySend.gain.setTargetAtTime(track.effects.delayMix, audioCtx.currentTime, 0.02);
+    // Update saturator
+    const drive = track.effects.distDrive ?? 0.08;
+    const mix   = track.effects.distMix   ?? 0.07;
+    this.saturator.curve = buildDistCurve(drive);
+    this.saturatorDry.gain.setTargetAtTime(1-mix, audioCtx.currentTime, 0.02);
+    this.saturatorWet.gain.setTargetAtTime(mix,   audioCtx.currentTime, 0.02);
+  }
+
+  destroy() {
+    try { this.lfo.stop(); } catch(e) {}
+    // Disconnect every node so nothing leaks into the audio graph
+    for (const node of [
+      this.trackGain, this.filter, this.saturator,
+      this.saturatorDry, this.saturatorWet, this.satBus,
+      this.dryGain, this.rvSend, this.dlySend, this.lfoGain
+    ]) { try { node.disconnect(); } catch(e) {} }
+  }
+}
+
+function rebuildEngines() {
+  if (!audioCtx) return;
+  // Destroy stale engines
+  for (const id of Object.keys(trackEngines)) {
+    trackEngines[id].destroy();
+    delete trackEngines[id];
+  }
+  // Create engines for current section tracks
+  for (const track of Object.values(activeTracks())) {
+    trackEngines[track.id] = new TrackEngine(track);
+  }
+}
+
+function getOrCreateEngine(track) {
+  if (!trackEngines[track.id]) {
+    trackEngines[track.id] = new TrackEngine(track);
+  }
+  return trackEngines[track.id];
+}
+
+// ── SYNTHESIS ──────────────────────────────────────────────────────
+function createNoiseBuffer(ctx) {
+  const buf = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i=0;i<d.length;i++) d[i] = Math.random()*2-1;
+  return buf;
+}
+
+function buildReverbIR(ctx, decay) {
+  const len = Math.floor(ctx.sampleRate * Math.max(decay, 0.3));
+  const buf = ctx.createBuffer(2, len, ctx.sampleRate);
+  for (let ch=0;ch<2;ch++) {
+    const d = buf.getChannelData(ch);
+    for (let i=0;i<len;i++) d[i] = (Math.random()*2-1) * Math.pow(1-i/len, decay*1.2);
+  }
+  return buf;
+}
+
+// Tanh soft-clipper — warm even-order harmonics, no harsh digital edge
+function buildDistCurve(drive) {
+  const n=512, c=new Float32Array(n), amount=Math.max(drive*12, 0.001);
+  const norm = Math.tanh(amount);
+  for(let i=0;i<n;i++){
+    const x=i*2/(n-1)-1;
+    c[i] = Math.tanh(amount*x) / norm;
+  }
+  return c;
+}
+
+function noiseBurst(ctx, dest, t, dur, fType, fFreq, fQ, gain) {
+  const src = ctx.createBufferSource(); src.buffer = noiseBuffer;
+  const f = ctx.createBiquadFilter(); f.type=fType; f.frequency.value=fFreq; f.Q.value=fQ||1;
+  const g = ctx.createGain(); g.gain.setValueAtTime(gain,t); g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
+  src.connect(f); f.connect(g); g.connect(dest);
+  src.start(t); src.stop(t+dur+0.01);
+}
+
+function playNote(instrument, freq, dur, t, dest) {
+  switch(instrument) {
+    case 'bell':    playBell(freq,dur,t,dest); break;
+    case 'marimba': playMarimba(freq,dur,t,dest); break;
+    case 'pluck':   playPluck(freq,dur,t,dest); break;
+    case 'bass':    playBass(freq,dur,t,dest); break;
+    case 'organ':   playOrgan(freq,dur,t,dest); break;
+    case 'piano':   playPiano(freq,dur,t,dest); break;
+    case 'guitar':  playGuitar(freq,dur,t,dest); break;
+    case 'flute':   playFlute(freq,dur,t,dest); break;
+    case 'kick':    playKick(t,dest); break;
+    case 'snare':   playSnare(t,dest); break;
+    case 'hat':     playHat(t,dest); break;
+    default:        playSynth(freq,dur,t,dest);
+  }
+}
+
+// Wow & flutter helper — slow LFO that modulates oscillator pitch by ~0.2%
+// Mimics tape deck speed fluctuations. depth = Hz deviation, rate = 2–4 Hz.
+function addWow(ctx, freqParam, freq, t, dur) {
+  const depth = freq * 0.002;        // 0.2% pitch wobble
+  const rate  = 2.2 + Math.random(); // 2.2–3.2 Hz, slightly random per note
+  const wow = ctx.createOscillator();
+  const wowG = ctx.createGain();
+  wow.type = 'sine';
+  wow.frequency.value = rate;
+  wowG.gain.value = depth;
+  wow.connect(wowG);
+  wowG.connect(freqParam);
+  wow.start(t);
+  wow.stop(t + dur + 0.1);
+}
+
+function playBell(freq,dur,t,dest) {
+  const ctx=audioCtx;
+  [{r:1,lv:0.11,d:Math.min(Math.max(dur*1.9,0.55),2.8)},
+   {r:2.72,lv:0.05,d:0},{r:4.11,lv:0.028,d:0}].forEach((p,i)=>{
+    const tail=i===0?p.d:p.d||p.d||Math.min(Math.max(dur*1.9,0.55),2.8)*(i===1?0.78:0.6);
+    const osc=ctx.createOscillator(), g=ctx.createGain();
+    osc.type='sine'; osc.frequency.value=freq*p.r;
+    if(i===0) addWow(ctx, osc.frequency, freq*p.r, t, tail); // wow on fundamental
+    g.gain.setValueAtTime(0.0001,t); g.gain.linearRampToValueAtTime(p.lv,t+0.008); g.gain.exponentialRampToValueAtTime(0.0001,t+tail);
+    osc.connect(g); g.connect(dest); osc.start(t); osc.stop(t+tail+0.04);
+  });
+}
+
+function playMarimba(freq,dur,t,dest) {
+  const ctx=audioCtx, tail=Math.min(Math.max(dur*0.72,0.16),0.95);
+  const b=ctx.createOscillator(), ov=ctx.createOscillator(), ovG=ctx.createGain(), g=ctx.createGain();
+  b.type='sine'; ov.type='sine';
+  b.frequency.setValueAtTime(freq*1.02,t); b.frequency.exponentialRampToValueAtTime(freq,t+0.035);
+  ov.frequency.value=freq*4.05;
+  addWow(ctx, b.frequency, freq, t, tail);
+  ovG.gain.setValueAtTime(0.035,t); ovG.gain.exponentialRampToValueAtTime(0.0001,t+tail*0.55);
+  g.gain.setValueAtTime(0.0001,t); g.gain.linearRampToValueAtTime(0.17,t+0.002); g.gain.exponentialRampToValueAtTime(0.0001,t+tail);
+  b.connect(g); ov.connect(ovG); ovG.connect(g); g.connect(dest);
+  noiseBurst(ctx,dest,t,0.015,'bandpass',1800,3,0.012);
+  b.start(t); ov.start(t); b.stop(t+tail+0.03); ov.stop(t+tail+0.03);
+}
+
+function playPluck(freq,dur,t,dest) {
+  const ctx=audioCtx;
+  const minDly = 256/ctx.sampleRate;
+  if(1/freq < minDly) { playGuitar(freq,dur,t,dest); return; }
+  const period=1/freq;
+  const bufSz=Math.max(Math.round(ctx.sampleRate*period),2);
+  const nb=ctx.createBuffer(1,bufSz,ctx.sampleRate);
+  const d=nb.getChannelData(0); for(let i=0;i<bufSz;i++) d[i]=Math.random()*2-1;
+  const src=ctx.createBufferSource(); src.buffer=nb;
+  const del=ctx.createDelay(0.5); del.delayTime.value=period;
+  const lp=ctx.createBiquadFilter(); lp.type='lowpass';
+  lp.frequency.value=Math.min(freq*6, ctx.sampleRate/2-100);
+  const fb=ctx.createGain();
+  const out=ctx.createGain();
+
+  // Schedule feedback gain to decay to 0 via Web Audio param automation —
+  // this kills the KS feedback loop sample-accurately without any setTimeout.
+  // setTargetAtTime exponentially approaches 0 with the given time constant.
+  const decayTau = Math.max(0.1, dur * 0.4);
+  fb.gain.setValueAtTime(0.975, t);
+  fb.gain.setTargetAtTime(0, t + dur * 0.3, decayTau);
+
+  // Output envelope
+  out.gain.setValueAtTime(0.12, t);
+  out.gain.setValueAtTime(0.12, t + dur);
+  out.gain.exponentialRampToValueAtTime(0.0001, t + dur + Math.min(1.0, decayTau * 3));
+
+  src.connect(del); del.connect(lp); lp.connect(fb); fb.connect(del);
+  lp.connect(out); out.connect(dest);
+  src.start(t); src.stop(t + period*2 + 0.01);
+}
+
+function playBass(freq,dur,t,dest) {
+  const ctx=audioCtx;
+  const osc=ctx.createOscillator(), vib=ctx.createOscillator(), vibG=ctx.createGain();
+  const f=ctx.createBiquadFilter(), g=ctx.createGain();
+  osc.type='sine'; osc.frequency.value=freq;
+  vib.type='sine'; vib.frequency.value=3.2; vibG.gain.value=freq*0.008;
+  f.type='lowpass'; f.frequency.value=freq*4; f.Q.value=0.7;
+  const atk=0.06, rel=Math.min(0.4,dur*0.25);
+  g.gain.setValueAtTime(0.0001,t); g.gain.linearRampToValueAtTime(0.22,t+atk);
+  g.gain.setValueAtTime(0.22,t+dur-rel); g.gain.exponentialRampToValueAtTime(0.0001,t+dur+0.15);
+  vib.connect(vibG); vibG.connect(osc.frequency);
+  osc.connect(f); f.connect(g); g.connect(dest);
+  vib.start(t); vib.stop(t+dur+0.2); osc.start(t); osc.stop(t+dur+0.2);
+}
+
+function playOrgan(freq,dur,t,dest) {
+  const ctx=audioCtx;
+  const master=ctx.createGain();
+  const atk=0.015, rel=0.03;
+  master.gain.setValueAtTime(0.0001,t); master.gain.linearRampToValueAtTime(0.12,t+atk);
+  master.gain.setValueAtTime(0.12,t+dur-rel); master.gain.linearRampToValueAtTime(0.0001,t+dur+rel);
+  master.connect(dest);
+  [[1,0.4],[2,0.2],[3,0.1],[4,0.08],[6,0.04]].forEach(([h,lv],i)=>{
+    const osc=ctx.createOscillator(), g=ctx.createGain();
+    osc.type='sine'; osc.frequency.value=freq*h; g.gain.value=lv;
+    if(i===0) addWow(ctx, osc.frequency, freq, t, dur+0.1);
+    osc.connect(g); g.connect(master); osc.start(t); osc.stop(t+dur+0.1);
+  });
+}
+
+function playPiano(freq,dur,t,dest) {
+  const ctx=audioCtx, tail=Math.min(Math.max(dur*1.45,0.34),2.2);
+  const b=ctx.createOscillator(), body=ctx.createOscillator();
+  const f=ctx.createBiquadFilter(), g=ctx.createGain();
+  b.type='triangle'; body.type='sine';
+  b.frequency.value=freq; body.frequency.value=freq*2; body.detune.value=4;
+  addWow(ctx, b.frequency, freq, t, tail);
+  f.type='lowpass'; f.frequency.setValueAtTime(3400,t); f.frequency.exponentialRampToValueAtTime(920,t+tail); f.Q.value=0.9;
+  g.gain.setValueAtTime(0.0001,t); g.gain.linearRampToValueAtTime(0.18,t+0.01); g.gain.exponentialRampToValueAtTime(0.0001,t+tail);
+  b.connect(f); body.connect(f); f.connect(g); g.connect(dest);
+  noiseBurst(ctx,dest,t,0.03,'bandpass',2600,1.1,0.025);
+  b.start(t); body.start(t); b.stop(t+tail+0.05); body.stop(t+tail+0.05);
+}
+
+function playGuitar(freq,dur,t,dest) {
+  const ctx=audioCtx, tail=Math.min(Math.max(dur*1.1,0.24),1.4);
+  const b=ctx.createOscillator(), shim=ctx.createOscillator();
+  const f=ctx.createBiquadFilter(), g=ctx.createGain();
+  b.type='triangle'; shim.type='sawtooth';
+  b.frequency.setValueAtTime(freq*1.004,t); b.frequency.exponentialRampToValueAtTime(freq,t+0.05);
+  addWow(ctx, b.frequency, freq, t, tail);
+  shim.frequency.value=freq*2.01; shim.detune.value=-6;
+  f.type='lowpass'; f.frequency.setValueAtTime(2100,t); f.frequency.exponentialRampToValueAtTime(820,t+tail); f.Q.value=1.4;
+  g.gain.setValueAtTime(0.0001,t); g.gain.linearRampToValueAtTime(0.16,t+0.006); g.gain.exponentialRampToValueAtTime(0.0001,t+tail);
+  b.connect(f); shim.connect(f); f.connect(g); g.connect(dest);
+  b.start(t); shim.start(t); b.stop(t+tail+0.03); shim.stop(t+tail+0.03);
+}
+
+function playFlute(freq,dur,t,dest) {
+  const ctx=audioCtx, tail=Math.min(Math.max(dur+0.18,0.35),2.2);
+  const b=ctx.createOscillator(), layer=ctx.createOscillator();
+  const lfoO=ctx.createOscillator(), lfoG=ctx.createGain();
+  const f=ctx.createBiquadFilter(), g=ctx.createGain();
+  b.type='sine'; layer.type='triangle'; lfoO.type='sine';
+  b.frequency.value=freq; layer.frequency.value=freq*1.002; layer.detune.value=3;
+  addWow(ctx, b.frequency, freq, t, tail);
+  lfoO.frequency.value=5.3; lfoG.gain.value=3.2;
+  f.type='lowpass'; f.frequency.value=2500; f.Q.value=0.7;
+  g.gain.setValueAtTime(0.0001,t); g.gain.linearRampToValueAtTime(0.12,t+0.05);
+  g.gain.setValueAtTime(0.1,t+Math.max(dur-0.04,0.08)); g.gain.exponentialRampToValueAtTime(0.0001,t+tail);
+  lfoO.connect(lfoG); lfoG.connect(b.frequency); lfoG.connect(layer.frequency);
+  b.connect(f); layer.connect(f); f.connect(g); g.connect(dest);
+  b.start(t); layer.start(t); lfoO.start(t);
+  b.stop(t+tail+0.04); layer.stop(t+tail+0.04); lfoO.stop(t+tail+0.04);
+}
+
+function playSynth(freq,dur,t,dest) {
+  const ctx=audioCtx;
+  const osc=ctx.createOscillator(), shim=ctx.createOscillator();
+  const f=ctx.createBiquadFilter(), g=ctx.createGain();
+  osc.type='triangle'; shim.type='sine';
+  osc.frequency.value=freq; shim.frequency.value=freq*2; shim.detune.value=6;
+  addWow(ctx, osc.frequency, freq, t, dur);
+  f.type='lowpass'; f.frequency.value=2200; f.Q.value=1.6;
+  g.gain.setValueAtTime(0.0001,t); g.gain.linearRampToValueAtTime(0.16,t+0.03); g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
+  osc.connect(f); shim.connect(f); f.connect(g); g.connect(dest);
+  osc.start(t); shim.start(t); osc.stop(t+dur+0.04); shim.stop(t+dur+0.04);
+}
+
+function playKick(t,dest) {
+  const ctx=audioCtx;
+  const osc=ctx.createOscillator(), g=ctx.createGain();
+  osc.type='sine'; osc.frequency.setValueAtTime(140,t); osc.frequency.exponentialRampToValueAtTime(42,t+0.18);
+  g.gain.setValueAtTime(0.22,t); g.gain.exponentialRampToValueAtTime(0.0001,t+0.18);
+  osc.connect(g); g.connect(dest); osc.start(t); osc.stop(t+0.2);
+}
+
+function playSnare(t,dest) {
+  const ctx=audioCtx;
+  noiseBurst(ctx,dest,t,0.16,'highpass',1600,0.8,0.18);
+  const osc=ctx.createOscillator(), g=ctx.createGain();
+  osc.type='triangle'; osc.frequency.value=220;
+  g.gain.setValueAtTime(0.07,t); g.gain.exponentialRampToValueAtTime(0.0001,t+0.1);
+  osc.connect(g); g.connect(dest); osc.start(t); osc.stop(t+0.12);
+}
+
+function playHat(t,dest) {
+  noiseBurst(audioCtx,dest,t,0.05,'highpass',4200,0.5,0.08);
+}
+
+// ── SCHEDULER ──────────────────────────────────────────────────────
+function startPlayback(fromBeat) {
+  if (!audioCtx) return;
+  isPlaying = true;
+  playStartBeat = fromBeat ?? 0;
+  playStartCtxTime = audioCtx.currentTime + 0.05;
+  // Fade hiss in slowly to the user-configured level
+  if (hissGainNode) hissGainNode.gain.setTargetAtTime(project.masterFx.hissLevel, audioCtx.currentTime, 1.2);
+  scheduleCursor = playStartBeat;
+  currentSectionPlayIdx = Math.max(0, project.sectionOrder.indexOf(activeSectionId));
+  sectionBeatOffset = 0;
+  schedInterval = setInterval(scheduleAhead, SCHED_MS);
+  document.getElementById('btn-play').textContent = '⏸ Pause';
+  document.getElementById('btn-play').classList.add('playing');
+  requestAnimationFrame(animLoop);
+}
+
+function stopPlayback() {
+  isPlaying = false;
+  clearInterval(schedInterval); schedInterval = null;
+  // Fade hiss out slowly
+  if (hissGainNode && audioCtx) hissGainNode.gain.setTargetAtTime(0, audioCtx.currentTime, 1.5);
+  document.getElementById('btn-play').textContent = '▶ Play';
+  document.getElementById('btn-play').classList.remove('playing');
+  PR.dirty = true; schedRedraw();
+}
+
+function currentBeat() {
+  if (!isPlaying || !audioCtx) return playStartBeat;
+  return playStartBeat + secToBeat(audioCtx.currentTime - playStartCtxTime);
+}
+
+function scheduleAhead() {
+  const now = audioCtx.currentTime;
+  const lookUntilBeat = secToBeat(now + LOOKAHEAD - playStartCtxTime) + playStartBeat;
+
+  while (scheduleCursor < lookUntilBeat) {
+    // which section are we in?
+    const secId = project.sectionOrder[currentSectionPlayIdx % project.sectionOrder.length];
+    const section = project.sections[secId];
+    if (!section) { scheduleCursor += 1; continue; }
+
+    const secLenBeats = section.lengthBars * 4;
+    const beatInSec   = scheduleCursor - sectionBeatOffset;
+
+    if (beatInSec >= secLenBeats) {
+      // advance to next section
+      sectionBeatOffset += secLenBeats;
+      currentSectionPlayIdx++;
+      continue;
+    }
+
+    // schedule notes in this tick slice
+    const sliceEnd = Math.min(beatInSec + SCHED_MS/1000 * project.tempo/60 + 0.01, secLenBeats);
+
+    const anySolo = Object.values(section.tracks).some(t=>t.soloed);
+    for (const track of Object.values(section.tracks)) {
+      const engine = getOrCreateEngine(track);
+      if (track.muted || (anySolo && !track.soloed)) continue;
+      if (!track.notes.length) continue;
+
+      // Compute this track's natural loop length (rounded up to nearest bar)
+      // so short drum loops repeat to fill longer chord sections
+      let rawLen = 0;
+      for (const n of track.notes) rawLen = Math.max(rawLen, n.beatStart + n.duration);
+      const trackLenBeats = Math.max(4, Math.ceil(rawLen / 4) * 4);
+
+      // Find which loop repetitions overlap the current slice
+      const startLoop = Math.floor(beatInSec / trackLenBeats);
+      const endLoop   = Math.floor((sliceEnd - 0.0001) / trackLenBeats);
+
+      for (let loop = startLoop; loop <= endLoop; loop++) {
+        for (const note of track.notes) {
+          const noteBeat = loop * trackLenBeats + note.beatStart;
+          if (noteBeat >= beatInSec && noteBeat < sliceEnd && noteBeat < secLenBeats) {
+            const t = playStartCtxTime + beatToSec(sectionBeatOffset + noteBeat - playStartBeat);
+            if (t >= now - 0.01) {
+              playNote(track.instrument, midiToHz(note.midiNote), beatToSec(note.duration), t, engine.dest());
+            }
+          }
+        }
+      }
+    }
+
+    scheduleCursor = sectionBeatOffset + sliceEnd;
+    if (sliceEnd >= secLenBeats) {
+      sectionBeatOffset += secLenBeats;
+      currentSectionPlayIdx++;
+    } else {
+      break;
+    }
+  }
+}
+
+let animFrameId = null;
+function animLoop() {
+  if (!isPlaying) return;
+  PR.dirty = true;
+  schedRedraw();
+  // Update playhead time display
+  const beat = currentBeat();
+  const secs = beatToSec(beat);
+  const m = Math.floor(secs/60), s = Math.floor(secs%60);
+  document.getElementById('playhead-time').textContent = `${m}:${s.toString().padStart(2,'0')}`;
+  animFrameId = requestAnimationFrame(animLoop);
+}
+
+// ── PIANO ROLL — CANVAS SETUP ──────────────────────────────────────
+const gridCanvas = document.getElementById('grid-canvas');
+const noteCanvas = document.getElementById('note-canvas');
+const gCtx = gridCanvas.getContext('2d');
+const nCtx = noteCanvas.getContext('2d');
+
+function resizeCanvases() {
+  const wrap = document.getElementById('canvas-wrap');
+  const w = wrap.clientWidth;
+  const h = wrap.clientHeight;
+  if (w === PR.width && h === PR.height) return;
+  PR.width = w; PR.height = h;
+  gridCanvas.width = noteCanvas.width = w;
+  gridCanvas.height = noteCanvas.height = h;
+  PR.gridDirty = true; PR.dirty = true;
+}
+
+// ── PIANO ROLL — DRAWING ───────────────────────────────────────────
+function drawGrid() {
+  if (!PR.gridDirty) return;
+  PR.gridDirty = false;
+  const ctx = gCtx;
+  const { width: W, height: H, rowHeight: RH, pixelsPerBeat: PPB, scrollBeat: SB, scrollPitchPx: SP } = PR;
+
+  ctx.clearRect(0, 0, W, H);
+
+  // ── Time ruler ────────────────────────────────────────────────
+  ctx.fillStyle = '#141418';
+  ctx.fillRect(0, 0, W, RULER_H);
+  ctx.fillStyle = '#111';
+  ctx.fillRect(0, 0, KEYS_WIDTH, RULER_H);
+
+  ctx.save();
+  ctx.beginPath(); ctx.rect(KEYS_WIDTH, 0, W - KEYS_WIDTH, RULER_H); ctx.clip();
+  const startBeat = Math.floor(SB);
+  const endBeat   = Math.ceil(SB + (W - KEYS_WIDTH) / PPB) + 2;
+  ctx.font = '10px monospace';
+  for (let b = startBeat; b <= endBeat; b++) {
+    const x = KEYS_WIDTH + (b - SB) * PPB;
+    if (b % 4 === 0) {
+      ctx.fillStyle = '#aaa'; ctx.textAlign = 'left';
+      ctx.fillText(`${b/4+1}`, x+2, RULER_H-4);
+      ctx.strokeStyle = '#555'; ctx.lineWidth = 1;
+    } else if (PPB >= 40) {
+      ctx.strokeStyle = '#333'; ctx.lineWidth = 0.5;
+    } else { continue; }
+    ctx.beginPath(); ctx.moveTo(x, RULER_H-8); ctx.lineTo(x, RULER_H); ctx.stroke();
+  }
+  ctx.restore();
+  // Ruler bottom border
+  ctx.strokeStyle = '#444'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(0,RULER_H); ctx.lineTo(W,RULER_H); ctx.stroke();
+
+  // ── Note area grid ────────────────────────────────────────────
+  ctx.save();
+  ctx.beginPath(); ctx.rect(KEYS_WIDTH, RULER_H, W - KEYS_WIDTH, H - RULER_H); ctx.clip();
+
+  for (let m = MIDI_MAX; m >= MIDI_MIN; m--) {
+    const y = RULER_H + (MIDI_MAX - m) * RH - SP;
+    if (y + RH < RULER_H || y > H) continue;
+    ctx.fillStyle = isBlack(m) ? '#1b1b24' : '#22222d';
+    ctx.fillRect(KEYS_WIDTH, y, W - KEYS_WIDTH, RH);
+    // C line
+    if (m % 12 === 0) {
+      ctx.strokeStyle = '#333'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(KEYS_WIDTH, y+RH); ctx.lineTo(W, y+RH); ctx.stroke();
+    }
+  }
+
+  // Vertical beat lines
+  for (let b = startBeat; b <= endBeat; b++) {
+    const x = KEYS_WIDTH + (b - SB) * PPB;
+    ctx.strokeStyle = b%4===0 ? '#3a3a48' : '#28282f';
+    ctx.lineWidth   = b%4===0 ? 1 : 0.5;
+    ctx.beginPath(); ctx.moveTo(x, RULER_H); ctx.lineTo(x, H); ctx.stroke();
+    if (PPB >= 60) {
+      const hx = x + PPB*0.5;
+      ctx.strokeStyle = '#222228'; ctx.lineWidth = 0.5;
+      ctx.beginPath(); ctx.moveTo(hx, RULER_H); ctx.lineTo(hx, H); ctx.stroke();
+    }
+  }
+  ctx.restore();
+
+  // ── Piano keyboard ────────────────────────────────────────────
+  ctx.save();
+  ctx.beginPath(); ctx.rect(0, RULER_H, KEYS_WIDTH, H - RULER_H); ctx.clip();
+  for (let m = MIDI_MAX; m >= MIDI_MIN; m--) {
+    const y = RULER_H + (MIDI_MAX - m) * RH - SP;
+    if (y + RH < RULER_H || y > H) continue;
+    const blk = isBlack(m);
+    ctx.fillStyle = blk ? '#1a1a1a' : '#2e2e2e';
+    ctx.fillRect(0, y, KEYS_WIDTH - 1, RH);
+    if (blk) { ctx.fillStyle='#111'; ctx.fillRect(KEYS_WIDTH-18, y, 18, RH); }
+    if (m % 12 === 0) {
+      ctx.fillStyle = '#777'; ctx.font = `${Math.min(RH-2,10)}px monospace`; ctx.textAlign='right';
+      ctx.fillText(`C${Math.floor(m/12)-1}`, KEYS_WIDTH-22, y+RH-2);
+    }
+    ctx.strokeStyle = '#222'; ctx.lineWidth = 0.5;
+    ctx.beginPath(); ctx.moveTo(0, y+RH); ctx.lineTo(KEYS_WIDTH-1, y+RH); ctx.stroke();
+  }
+  // Key border
+  ctx.strokeStyle = '#444'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(KEYS_WIDTH-0.5, RULER_H); ctx.lineTo(KEYS_WIDTH-0.5, H); ctx.stroke();
+  ctx.restore();
+}
+
+let redrawQueued = false;
+function schedRedraw() {
+  if (!redrawQueued) { redrawQueued = true; requestAnimationFrame(doRedraw); }
+}
+function doRedraw() {
+  redrawQueued = false;
+  resizeCanvases();
+  drawGrid();
+  if (!PR.dirty) return;
+  PR.dirty = false;
+  drawNotes();
+}
+
+function drawNotes() {
+  const ctx = nCtx;
+  const { width: W, height: H, rowHeight: RH, pixelsPerBeat: PPB, scrollBeat: SB, scrollPitchPx: SP } = PR;
+  ctx.clearRect(0, 0, W, H);
+
+  const section = project?.sections[activeSectionId];
+  if (!section) return;
+
+  ctx.save();
+  ctx.beginPath(); ctx.rect(KEYS_WIDTH, RULER_H, W-KEYS_WIDTH, H-RULER_H); ctx.clip();
+
+  for (const track of Object.values(section.tracks)) {
+    const color = track.color || '#7c6aff';
+    for (const note of track.notes) {
+      const x = KEYS_WIDTH + (note.beatStart - SB) * PPB;
+      const w = note.duration * PPB;
+      const y = RULER_H + (MIDI_MAX - note.midiNote) * RH - SP;
+      const h = RH - 1;
+      if (x+w < KEYS_WIDTH || x > W || y+h < RULER_H || y > H) continue;
+
+      // Highlight if being dragged
+      const isDrag = dragState && dragState.noteId === note.id;
+      ctx.globalAlpha = isDrag ? 0.5 : 1;
+
+      roundRect(ctx, Math.max(x, KEYS_WIDTH), y, Math.min(w-1, W-Math.max(x,KEYS_WIDTH)), h, 2);
+      ctx.fillStyle = color; ctx.fill();
+      ctx.strokeStyle = lighten(color, 30); ctx.lineWidth = 1; ctx.stroke();
+
+      // Resize handle
+      if (w > 8 && x+w <= W) {
+        ctx.fillStyle = 'rgba(255,255,255,0.25)';
+        ctx.fillRect(x+w-4, y+1, 3, h-2);
+      }
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // Drag ghost
+  if (dragState?.type === 'move' && dragState.ghostNote) {
+    const note = dragState.ghostNote;
+    const color = dragState.trackColor || '#aaa';
+    const x = KEYS_WIDTH + (note.beatStart - SB) * PPB;
+    const y = RULER_H + (MIDI_MAX - note.midiNote) * RH - SP;
+    const w = note.duration * PPB;
+    const h = RH - 1;
+    ctx.globalAlpha = 0.7;
+    roundRect(ctx, x, y, w-1, h, 2);
+    ctx.fillStyle = color; ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+
+  ctx.restore();
+
+  // Playhead
+  if (isPlaying) {
+    const beat = currentBeat();
+    // find beat within active section
+    const secLenBeats = (project.sections[activeSectionId]?.lengthBars||2)*4;
+    const beatInSec = ((beat - playStartBeat) % secLenBeats + secLenBeats) % secLenBeats;
+    const px = KEYS_WIDTH + (beatInSec - SB) * PPB;
+    if (px >= KEYS_WIDTH && px <= W) {
+      ctx.save();
+      ctx.strokeStyle = 'rgba(255,80,80,0.9)'; ctx.lineWidth = 1.5;
+      ctx.setLineDash([4,3]);
+      ctx.beginPath(); ctx.moveTo(px, RULER_H); ctx.lineTo(px, H); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.restore();
+    }
+  }
+}
+
+// ── PIANO ROLL — INTERACTION ───────────────────────────────────────
+function canvasCoords(e) {
+  const rect = noteCanvas.getBoundingClientRect();
+  return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+}
+function xToBeat(x)     { return (x - KEYS_WIDTH) / PR.pixelsPerBeat + PR.scrollBeat; }
+function yToMidi(y)     { return Math.round(MIDI_MAX - (y - RULER_H + PR.scrollPitchPx) / PR.rowHeight); }
+
+function hitTest(x, y) {
+  const section = project?.sections[activeSectionId];
+  if (!section) return null;
+  const beat = xToBeat(x), midi = yToMidi(y);
+  // iterate tracks in reverse so topmost (last-added) gets hit first
+  const tracks = Object.values(section.tracks).reverse();
+  for (const track of tracks) {
+    for (const note of [...track.notes].reverse()) {
+      const nx = KEYS_WIDTH + (note.beatStart - PR.scrollBeat) * PR.pixelsPerBeat;
+      const ny = RULER_H + (MIDI_MAX - note.midiNote) * PR.rowHeight - PR.scrollPitchPx;
+      const nw = note.duration * PR.pixelsPerBeat;
+      const nh = PR.rowHeight - 1;
+      if (x >= nx && x <= nx+nw && y >= ny && y <= ny+nh) {
+        const isResize = x >= nx+nw-6;
+        return { track, note, isResize };
+      }
+    }
+  }
+  return null;
+}
+
+noteCanvas.addEventListener('mousedown', async e => {
+  await ensureAudio();
+  const { x, y } = canvasCoords(e);
+  if (x < KEYS_WIDTH) {
+    // keyboard preview
+    const midi = yToMidi(y);
+    if (midi >= MIDI_MIN && midi <= MIDI_MAX) {
+      const eng = Object.values(trackEngines)[0];
+      const dest = eng ? eng.dest() : masterBus;
+      const track = Object.values(activeTracks())[0];
+      if (track) playNote(track.instrument, midiToHz(midi), 0.5, audioCtx.currentTime, dest);
+    }
+    return;
+  }
+  if (y < RULER_H) {
+    // seek
+    const beat = xToBeat(x);
+    playStartBeat = Math.max(0, beat);
+    PR.dirty = true; schedRedraw(); return;
+  }
+
+  const hit = hitTest(x, y);
+  if (activeTool === 'eraser' || e.button === 2) {
+    if (hit) {
+      pushUndo();
+      hit.track.notes = hit.track.notes.filter(n => n.id !== hit.note.id);
+      PR.dirty = true; schedRedraw(); saveProject();
+    }
+    return;
+  }
+  if (activeTool === 'pointer') {
+    if (hit) {
+      pushUndo();
+      dragState = {
+        type: hit.isResize ? 'resize' : 'move',
+        noteId: hit.note.id,
+        trackId: hit.track.id,
+        trackColor: hit.track.color,
+        startX: x, startY: y,
+        origBeat: hit.note.beatStart,
+        origMidi: hit.note.midiNote,
+        origDur:  hit.note.duration,
+        ghostNote: { ...hit.note },
+      };
+    }
+    return;
+  }
+  // Pencil: create note
+  {
+    pushUndo();
+    const beat = snapBeat(xToBeat(x), quantSnap);
+    const midi = clamp(yToMidi(y), MIDI_MIN, MIDI_MAX);
+    const dur  = quantSnap || 0.5;
+    const note = makeNote(beat, midi, dur);
+    // Place in first non-muted track, or first track
+    const tracks = Object.values(activeTracks());
+    const target = tracks.find(t=>!t.muted) || tracks[0];
+    if (target) {
+      target.notes.push(note);
+      dragState = { type:'draw', noteId:note.id, trackId:target.id, startX:x, origBeat:beat, origMidi:midi };
+      // preview sound
+      const eng = getOrCreateEngine(target);
+      playNote(target.instrument, midiToHz(midi), dur, audioCtx.currentTime, eng.dest());
+    }
+    PR.dirty = true; schedRedraw(); saveProject();
+  }
+});
+
+noteCanvas.addEventListener('mousemove', e => {
+  if (!dragState) return;
+  const { x, y } = canvasCoords(e);
+  const section = project.sections[activeSectionId];
+  const track = section.tracks[dragState.trackId];
+  if (!track) return;
+  const note = track.notes.find(n => n.id === dragState.noteId);
+  if (!note) return;
+
+  if (dragState.type === 'resize') {
+    const curBeat = xToBeat(x);
+    const newDur  = Math.max(quantSnap||0.0625, snapBeat(curBeat - dragState.origBeat, quantSnap||0.0625));
+    note.duration = newDur;
+  } else if (dragState.type === 'move') {
+    const db = xToBeat(x) - xToBeat(dragState.startX);
+    const dm = yToMidi(y) - yToMidi(dragState.startY);
+    const newBeat = snapBeat(Math.max(0, dragState.origBeat + db), quantSnap||0.0625);
+    const newMidi = clamp(dragState.origMidi + dm, MIDI_MIN, MIDI_MAX);
+    dragState.ghostNote = { ...note, beatStart: newBeat, midiNote: newMidi };
+    note.beatStart = newBeat; note.midiNote = newMidi;
+  } else if (dragState.type === 'draw') {
+    const curBeat = xToBeat(x);
+    const newDur  = Math.max(quantSnap||0.0625, snapBeat(curBeat - dragState.origBeat, quantSnap||0.0625));
+    note.duration = newDur;
+  }
+  PR.dirty = true; schedRedraw();
+});
+
+noteCanvas.addEventListener('mouseup', () => {
+  if (dragState) { dragState = null; saveProject(); }
+});
+noteCanvas.addEventListener('mouseleave', () => {
+  if (dragState) { dragState = null; saveProject(); }
+});
+noteCanvas.addEventListener('contextmenu', e => e.preventDefault());
+
+// Scroll
+noteCanvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  if (e.ctrlKey || e.metaKey) {
+    // Zoom
+    const factor = e.deltaY < 0 ? 1.15 : 0.87;
+    PR.pixelsPerBeat = clamp(PR.pixelsPerBeat * factor, 10, 400);
+    document.getElementById('zoom-label').textContent = Math.round(PR.pixelsPerBeat) + ' px/beat';
+    PR.gridDirty = true;
+  } else if (e.shiftKey) {
+    PR.scrollPitchPx = clamp(PR.scrollPitchPx + e.deltaY * 0.5, 0, (MIDI_MAX - MIDI_MIN) * PR.rowHeight - (PR.height - RULER_H));
+    PR.gridDirty = true;
+  } else {
+    PR.scrollBeat = Math.max(0, PR.scrollBeat + e.deltaY * 0.003 * (1000 / PR.pixelsPerBeat));
+    PR.gridDirty = true;
+  }
+  PR.dirty = true; schedRedraw();
+}, { passive: false });
+
+function zoomIn()  { PR.pixelsPerBeat = clamp(PR.pixelsPerBeat*1.2,10,400); document.getElementById('zoom-label').textContent=Math.round(PR.pixelsPerBeat)+' px/beat'; PR.gridDirty=true; PR.dirty=true; schedRedraw(); }
+function zoomOut() { PR.pixelsPerBeat = clamp(PR.pixelsPerBeat/1.2,10,400); document.getElementById('zoom-label').textContent=Math.round(PR.pixelsPerBeat)+' px/beat'; PR.gridDirty=true; PR.dirty=true; schedRedraw(); }
+
+// ── TRACK HEADERS UI ───────────────────────────────────────────────
+function renderTrackHeaders() {
+  const list = document.getElementById('track-list');
+  list.innerHTML = '';
+  const tracks = Object.values(activeTracks());
+  tracks.forEach(track => {
+    const card = document.createElement('div');
+    card.className = 'track-card';
+    card.dataset.trackId = track.id;
+
+    const instOpts = INSTRUMENTS.map(i =>
+      `<option value="${i.id}" ${i.id===track.instrument?'selected':''}>${i.label}</option>`
+    ).join('');
+
+    card.innerHTML = `
+      <div class="track-row1">
+        <div class="track-color-swatch" style="background:${track.color}" title="Click to change color"></div>
+        <input class="track-name" type="text" value="${track.label}" maxlength="24" title="Track name">
+        <button class="track-btn ${track.muted?'muted':''}" data-action="mute" title="Mute">M</button>
+        <button class="track-btn ${track.soloed?'soloed':''}" data-action="solo" title="Solo">S</button>
+        <button class="track-btn danger" data-action="del" title="Remove track">✕</button>
+      </div>
+      <div class="track-row2">
+        <select class="track-inst-sel" data-action="inst">${instOpts}</select>
+        <input type="range" class="vol-slider" data-action="vol" min="0" max="1" step="0.01" value="${track.volume}" title="Volume">
+      </div>
+      <div class="track-row3">
+        <span style="font-size:10px;color:#666">Rev:</span>
+        <input type="range" class="rev-slider" data-action="rev" min="0" max="1" step="0.01" value="${track.reverbSend}" title="Reverb send">
+        <button class="fx-toggle" data-action="fx" title="Show effects">FX</button>
+      </div>`;
+
+    // FX panel
+    const fx = track.effects;
+    const fxPanel = document.createElement('div');
+    fxPanel.className = 'track-fx';
+    fxPanel.innerHTML = `
+      <div class="fx-row"><label>Dly mix</label><input type="range" class="fx-slider" data-fx="delayMix" min="0" max="1" step="0.01" value="${fx.delayMix}"></div>
+      <div class="fx-row"><label>Dly time</label><input type="range" class="fx-slider" data-fx="delayTime" min="0.05" max="1" step="0.01" value="${fx.delayTime}"></div>
+      <div class="fx-row"><label>Dly fdbk</label><input type="range" class="fx-slider" data-fx="delayFeedback" min="0" max="0.9" step="0.01" value="${fx.delayFeedback}"></div>
+      <div class="fx-row"><label>Filter</label><input type="range" class="fx-slider" data-fx="filterCutoff" min="100" max="20000" step="100" value="${fx.filterCutoff}"></div>
+      <div class="fx-row"><label>LFO depth</label><input type="range" class="fx-slider" data-fx="lfoDepth" min="0" max="1" step="0.01" value="${fx.lfoDepth}"></div>
+      <div class="fx-row"><label>LFO rate</label><input type="range" class="fx-slider" data-fx="lfoRate" min="0.1" max="20" step="0.1" value="${fx.lfoRate}"></div>`;
+
+    card.appendChild(fxPanel);
+
+    // Events
+    card.querySelector('[data-action="mute"]').addEventListener('click', () => {
+      track.muted = !track.muted;
+      trackEngines[track.id]?.apply(track);
+      renderTrackHeaders(); saveProject();
+    });
+    card.querySelector('[data-action="solo"]').addEventListener('click', () => {
+      track.soloed = !track.soloed;
+      Object.values(activeTracks()).forEach(t => trackEngines[t.id]?.apply(t));
+      renderTrackHeaders(); saveProject();
+    });
+    card.querySelector('[data-action="del"]').addEventListener('click', () => {
+      if (Object.keys(activeTracks()).length <= 1) return;
+      pushUndo();
+      // Remove only from the active section — sections are independent
+      delete project.sections[activeSectionId].tracks[track.id];
+      trackEngines[track.id]?.destroy(); delete trackEngines[track.id];
+      renderTrackHeaders(); PR.dirty=true; schedRedraw(); saveProject();
+    });
+    card.querySelector('[data-action="inst"]').addEventListener('change', e => {
+      track.instrument = e.target.value; saveProject();
+    });
+    card.querySelector('[data-action="vol"]').addEventListener('input', e => {
+      track.volume = +e.target.value;
+      trackEngines[track.id]?.apply(track); saveProject();
+    });
+    card.querySelector('[data-action="rev"]').addEventListener('input', e => {
+      track.reverbSend = +e.target.value;
+      trackEngines[track.id]?.apply(track); saveProject();
+    });
+    card.querySelector('[data-action="fx"]').addEventListener('click', () => {
+      fxPanel.classList.toggle('open');
+    });
+    card.querySelector('.track-name').addEventListener('change', e => {
+      track.label = e.target.value; saveProject();
+    });
+    card.querySelector('.track-color-swatch').addEventListener('click', () => {
+      const idx = TRACK_COLORS.indexOf(track.color);
+      track.color = TRACK_COLORS[(idx+1) % TRACK_COLORS.length];
+      renderTrackHeaders(); PR.dirty=true; schedRedraw(); saveProject();
+    });
+    fxPanel.querySelectorAll('.fx-slider').forEach(sl => {
+      sl.addEventListener('input', () => {
+        track.effects[sl.dataset.fx] = +sl.value;
+        trackEngines[track.id]?.apply(track); saveProject();
+      });
+    });
+
+    list.appendChild(card);
+  });
+}
+
+function addTrack() {
+  pushUndo();
+  const t = makeTrack();
+  // Add to ALL sections so it's consistent
+  for (const sec of Object.values(project.sections)) {
+    sec.tracks[t.id] = { ...t, notes: [] };
+  }
+  // Make sure active section has same id/settings
+  project.sections[activeSectionId].tracks[t.id] = t;
+  if (audioCtx) trackEngines[t.id] = new TrackEngine(t);
+  renderTrackHeaders(); PR.dirty=true; schedRedraw(); saveProject();
+}
+
+// ── SECTION MANAGEMENT ─────────────────────────────────────────────
+function renderSectionUI() {
+  // Tabs
+  const tabs = document.getElementById('section-tabs');
+  tabs.innerHTML = '';
+  project.sectionOrder.forEach(id => {
+    const sec = project.sections[id];
+    const btn = document.createElement('button');
+    btn.className = 'sec-tab' + (id===activeSectionId?' active':'');
+    btn.title = `Section ${id} — click to switch`;
+
+    const lbl = document.createElement('span');
+    lbl.textContent = sec.label || id;
+    btn.appendChild(lbl);
+
+    // × delete button — only show when there's more than one section
+    if (project.sectionOrder.length > 1) {
+      const del = document.createElement('span');
+      del.className = 'sec-del';
+      del.textContent = '×';
+      del.title = `Delete Section ${id}`;
+      del.addEventListener('click', e => { e.stopPropagation(); deleteSection(id); });
+      btn.appendChild(del);
+    }
+
+    btn.addEventListener('click', () => switchSection(id));
+    tabs.appendChild(btn);
+  });
+
+  // Order display
+  const orderDiv = document.getElementById('section-order');
+  orderDiv.innerHTML = project.sectionOrder.map((id,i) =>
+    `<span style="cursor:pointer;padding:1px 6px;border:1px solid #333;border-radius:3px;background:#1e1e28"
+      title="Click to remove from order" data-oi="${i}">${id}</span>`
+  ).join('<span style="color:#444">→</span>');
+  orderDiv.querySelectorAll('[data-oi]').forEach(el => {
+    el.addEventListener('click', () => {
+      if (project.sectionOrder.length > 1) {
+        project.sectionOrder.splice(+el.dataset.oi, 1);
+        renderSectionUI(); saveProject();
+      }
+    });
+  });
+}
+
+function switchSection(id) {
+  if (!project.sections[id]) return;
+  activeSectionId = id;
+  if (audioCtx) rebuildEngines();
+  renderTrackHeaders();
+  renderSectionUI();
+  PR.gridDirty = true; PR.dirty = true; schedRedraw();
+}
+
+function addSection() {
+  // Find next available letter
+  const used = new Set(Object.keys(project.sections));
+  let id = 'A';
+  for (let i=0;i<26;i++) { id=String.fromCharCode(65+i); if (!used.has(id)) break; }
+  pushUndo();
+  // Start blank — user will drop MIDIs in independently
+  project.sections[id] = makeSection(id);
+  project.sectionOrder.push(id);
+  switchSection(id);
+  saveProject();
+}
+
+function deleteSection(id) {
+  if (project.sectionOrder.length <= 1) return; // must keep at least one
+  pushUndo();
+
+  // Remove from order (all occurrences) and from sections map
+  project.sectionOrder = project.sectionOrder.filter(s => s !== id);
+  delete project.sections[id];
+
+  // If we just deleted the active section, switch to the first remaining one
+  if (activeSectionId === id) {
+    activeSectionId = project.sectionOrder[0];
+  }
+
+  if (audioCtx) rebuildEngines();
+  renderTrackHeaders();
+  renderSectionUI();
+  PR.gridDirty = true; PR.dirty = true; schedRedraw();
+  saveProject();
+  setStatus(`Section ${id} deleted`);
+}
+
+// ── MIDI EXPORT ────────────────────────────────────────────────────
+function encodeVLQ(v) {
+  if (v < 0x80) return [v];
+  const b = [v & 0x7F]; v >>= 7;
+  while (v > 0) { b.unshift((v & 0x7F) | 0x80); v >>= 7; }
+  return b;
+}
+
+function buildTempoTrack(bpm) {
+  const usPerBeat = Math.round(60000000 / bpm);
+  const events = [
+    ...encodeVLQ(0), 0xFF, 0x51, 0x03,
+    (usPerBeat>>16)&0xFF, (usPerBeat>>8)&0xFF, usPerBeat&0xFF,
+    ...encodeVLQ(0), 0xFF, 0x2F, 0x00
+  ];
+  const len = events.length;
+  return [0x4D,0x54,0x72,0x6B, (len>>24)&0xFF,(len>>16)&0xFF,(len>>8)&0xFF,len&0xFF, ...events];
+}
+
+function buildNoteTrack(track) {
+  const evs = [];
+  for (const note of track.notes) {
+    evs.push({ tick: Math.round(note.beatStart * PPQ), type:0x90, note:note.midiNote, vel:note.velocity });
+    evs.push({ tick: Math.round((note.beatStart+note.duration) * PPQ), type:0x80, note:note.midiNote, vel:0 });
+  }
+  evs.sort((a,b) => a.tick-b.tick || (a.type===0x80?-1:1));
+  const bytes = [];
+  let prevTick = 0;
+  for (const ev of evs) {
+    bytes.push(...encodeVLQ(ev.tick - prevTick));
+    bytes.push(ev.type, ev.note, ev.vel);
+    prevTick = ev.tick;
+  }
+  bytes.push(...encodeVLQ(0), 0xFF, 0x2F, 0x00); // end of track
+  const len = bytes.length;
+  return [0x4D,0x54,0x72,0x6B, (len>>24)&0xFF,(len>>16)&0xFF,(len>>8)&0xFF,len&0xFF, ...bytes];
+}
+
+function exportMidi() {
+  const section = project.sections[activeSectionId];
+  if (!section) return;
+  const tracks = Object.values(section.tracks).filter(t=>t.notes.length>0);
+  const nTrk = tracks.length + 1; // +1 for tempo track
+  const header = [
+    0x4D,0x54,0x68,0x64, 0,0,0,6, // MThd length=6
+    0,1,                           // format 1
+    (nTrk>>8)&0xFF, nTrk&0xFF,    // num tracks
+    (PPQ>>8)&0xFF, PPQ&0xFF        // division
+  ];
+  const chunks = [buildTempoTrack(project.tempo), ...tracks.map(buildNoteTrack)];
+  const all = [...header, ...chunks.flat()];
+  const blob = new Blob([new Uint8Array(all)], {type:'audio/midi'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = (project.title||'export')+'.mid';
+  a.click();
+  setStatus('MIDI exported');
+}
+
+// ── MIDI IMPORT ────────────────────────────────────────────────────
+function readVLQ(view, pos) {
+  let val=0, bytes=0;
+  while(true){
+    const b=view.getUint8(pos+bytes); bytes++;
+    val=(val<<7)|(b&0x7F);
+    if(!(b&0x80)) break;
+  }
+  return [val, bytes];
+}
+
+function readStr(view, pos, len) {
+  let s='';
+  for(let i=0;i<len;i++) s+=String.fromCharCode(view.getUint8(pos+i));
+  return s;
+}
+
+function parseMidi(buf) {
+  const view = new DataView(buf);
+  if (readStr(view,0,4) !== 'MThd') throw new Error('Not a MIDI file');
+  const hdrLen  = view.getUint32(4,false);
+  const format  = view.getUint16(8,false);
+  const nTracks = view.getUint16(10,false);
+  const div     = view.getUint16(12,false);
+  const ppq     = (div & 0x8000) ? 480 : div;
+  let pos = 8 + hdrLen;
+
+  let tempoMicros = 500000;
+  const parsed = [];
+
+  for (let ti=0; ti<nTracks && pos<buf.byteLength; ti++) {
+    if (readStr(view,pos,4) !== 'MTrk') break;
+    const tLen = view.getUint32(pos+4,false);
+    const tEnd = pos+8+tLen;
+    pos += 8;
+    const evs = []; let absTick=0; let rs=0;
+    while (pos < tEnd) {
+      const [dt, db] = readVLQ(view,pos); pos+=db; absTick+=dt;
+      if (pos>=tEnd) break;
+      let sb = view.getUint8(pos);
+      if (sb===0xFF) {
+        pos++;
+        const mt = view.getUint8(pos++);
+        const [ml,mb] = readVLQ(view,pos); pos+=mb;
+        if (mt===0x51 && ml===3 && ti===0) {
+          tempoMicros = (view.getUint8(pos)<<16)|(view.getUint8(pos+1)<<8)|view.getUint8(pos+2);
+        }
+        pos+=ml;
+      } else if (sb===0xF0||sb===0xF7) {
+        pos++;
+        const [sl,sb2]=readVLQ(view,pos); pos+=sb2+sl;
+      } else {
+        if (sb&0x80) { rs=sb; pos++; } else { sb=rs; }
+        const type=(sb&0xF0)>>4, ch=sb&0x0F;
+        if (type===0x9) {
+          const n=view.getUint8(pos++), v=view.getUint8(pos++);
+          evs.push({tick:absTick, type:v>0?'on':'off', ch, note:n, vel:v});
+        } else if (type===0x8) {
+          const n=view.getUint8(pos++); pos++;
+          evs.push({tick:absTick, type:'off', ch, note:n, vel:0});
+        } else if (type===0xA||type===0xB||type===0xE) { pos+=2; }
+        else if (type===0xC||type===0xD) { pos+=1; }
+      }
+    }
+    pos = tEnd;
+    parsed.push(evs);
+  }
+
+  const bpm = Math.round(60000000/tempoMicros);
+  return buildProjectFromMidi(parsed, ppq, bpm);
+}
+
+// General MIDI drum note → instrument group
+// Channel 9 (0-indexed) = GM percussion channel
+const GM_DRUMS = {
+  35:'kick',  36:'kick',                          // bass drums
+  37:'snare', 38:'snare', 39:'snare', 40:'snare', // snare / rim / clap
+  41:'snare', 43:'snare', 45:'snare',             // low/mid/high floor toms → snare
+  47:'snare', 48:'snare', 50:'snare',             // mid/high toms → snare
+  42:'hat',   44:'hat',   46:'hat',               // closed / pedal / open hi-hat
+  49:'hat',   51:'hat',   52:'hat',   53:'hat',   // crash / ride / china / ride bell
+  54:'hat',   55:'hat',   56:'hat',   57:'hat',   // tambourine / splash / cowbell / crash 2
+  58:'hat',   59:'hat',                           // vibraslap / ride 2
+};
+const GM_DRUM_LABELS = { kick:'Kick', snare:'Snare', hat:'Hi-Hat' };
+
+function buildProjectFromMidi(tracks, ppq, bpm) {
+  const proj = makeProject({ tempo: bpm });
+  const secA = proj.sections['A'];
+  let colorIdx = 0;
+
+  for (const evs of tracks) {
+    const open = {};            // `ch_note` → {tick,vel}
+    const notesByChannel = {};  // ch → notes[]  (melodic)
+    const drumNotes = {};       // 'kick'|'snare'|'hat' → notes[]
+
+    // Pre-scan: decide which channels are drums.
+    // A channel is drums if ch===9 OR >70% of its note-ons are GM drum note numbers.
+    // This handles packs (like Donit) that put drums on ch 0 with GM note numbers.
+    const chTotal = {}, chDrum = {};
+    for (const ev of evs) {
+      if (ev.type !== 'on' || ev.vel === 0) continue;
+      chTotal[ev.ch] = (chTotal[ev.ch] || 0) + 1;
+      if (GM_DRUMS[ev.note] !== undefined)
+        chDrum[ev.ch] = (chDrum[ev.ch] || 0) + 1;
+    }
+    const drumChs = new Set(
+      Object.keys(chTotal)
+        .map(Number)
+        .filter(ch => ch === 9 || (chDrum[ch] || 0) / chTotal[ch] > 0.7)
+    );
+
+    for (const ev of evs) {
+      const key = `${ev.ch}_${ev.note}`;
+      if (ev.type==='on') {
+        open[key] = {tick:ev.tick, vel:ev.vel};
+      } else if (ev.type==='off' && open[key]) {
+        const {tick:onTick, vel} = open[key];
+        const note = {
+          id: uid(),
+          beatStart: onTick/ppq,
+          duration: Math.max((ev.tick-onTick)/ppq, 0.0625),
+          midiNote: ev.note,
+          velocity: vel
+        };
+        if (drumChs.has(ev.ch)) {
+          const inst = GM_DRUMS[ev.note] || 'snare';
+          if (!drumNotes[inst]) drumNotes[inst] = [];
+          drumNotes[inst].push(note);
+        } else {
+          if (!notesByChannel[ev.ch]) notesByChannel[ev.ch] = [];
+          notesByChannel[ev.ch].push(note);
+        }
+        delete open[key];
+      }
+    }
+
+    // Melodic tracks — one per MIDI channel
+    for (const [ch, notes] of Object.entries(notesByChannel)) {
+      if (!notes.length) continue;
+      const tid = uid();
+      secA.tracks[tid] = {
+        id:tid, label:`Ch ${parseInt(ch)+1}`,
+        instrument:'piano',
+        color: TRACK_COLORS[colorIdx%TRACK_COLORS.length],
+        volume:0.8, muted:false, soloed:false, reverbSend:0.2,
+        notes, effects:DEFAULT_FX()
+      };
+      colorIdx++;
+    }
+
+    // Drum tracks — one per GM instrument group (kick / snare / hat)
+    for (const [inst, notes] of Object.entries(drumNotes)) {
+      if (!notes.length) continue;
+      const tid = uid();
+      secA.tracks[tid] = {
+        id:tid, label: GM_DRUM_LABELS[inst] || inst,
+        instrument: inst,
+        color: TRACK_COLORS[colorIdx%TRACK_COLORS.length],
+        volume:0.8, muted:false, soloed:false, reverbSend:0.1,
+        notes, effects:{ ...DEFAULT_FX(), ...(INST_FILTER[inst]||{}) }
+      };
+      colorIdx++;
+    }
+  }
+
+  // Compute section length
+  let maxBeat = 4;
+  for (const t of Object.values(secA.tracks))
+    for (const n of t.notes)
+      maxBeat = Math.max(maxBeat, n.beatStart+n.duration);
+  secA.lengthBars = Math.ceil(maxBeat/4);
+  return proj;
+}
+
+// ── CHORD ROLE EXPANDER ────────────────────────────────────────────
+// Takes a parsed chord MIDI and returns three tracks:
+//   chords  → full voicing on organ (Yellow)
+//   bass    → lowest note per chord, octave down, on bass (Green)
+//   arpeggio → 16th-note arpeggio cycling chord tones, on pluck (Red)
+function expandChordRoles(incomingTracks) {
+  // Flatten all notes across incoming tracks, sort by beat then pitch
+  const allNotes = [];
+  for (const t of Object.values(incomingTracks))
+    for (const n of t.notes) allNotes.push(n);
+  allNotes.sort((a,b) => a.beatStart - b.beatStart || a.midiNote - b.midiNote);
+  if (!allNotes.length) return null;
+
+  // Group into chords: notes within 0.1 beats of a chord's start beat
+  const chords = [];
+  for (const note of allNotes) {
+    const last = chords[chords.length-1];
+    if (last && Math.abs(note.beatStart - last[0].beatStart) < 0.1)
+      last.push(note);
+    else
+      chords.push([note]);
+  }
+
+  // ── Yellow: chord voicing on organ ──────────────────────────────
+  const chordNotes = allNotes.map(n => ({...n, id:uid()}));
+
+  // ── Green: bass — lowest note per chord, one octave down ────────
+  const bassNotes = chords.map((chord, i) => {
+    const lowest = chord.reduce((m,n) => n.midiNote < m.midiNote ? n : m, chord[0]);
+    const nextBeat = i < chords.length-1 ? chords[i+1][0].beatStart
+                                          : lowest.beatStart + lowest.duration;
+    return {
+      id: uid(),
+      beatStart: lowest.beatStart,
+      duration:  Math.max(nextBeat - lowest.beatStart, 0.5),
+      midiNote:  Math.max(lowest.midiNote - 12, 24), // octave down, floor at C1
+      velocity:  Math.min((lowest.velocity||80) + 10, 120)
+    };
+  });
+
+  // ── Red: arpeggio — 16th notes cycling chord tones upward ───────
+  const ARP = 0.25; // 16th note
+  const arpNotes = [];
+  for (let i = 0; i < chords.length; i++) {
+    const chord  = chords[i];
+    const start  = chord[0].beatStart;
+    const end    = i < chords.length-1 ? chords[i+1][0].beatStart
+                                       : start + chord[0].duration;
+    // Chord tones sorted low→high, plus octave-up copies for wider range
+    const tones  = [...chord].sort((a,b) => a.midiNote - b.midiNote);
+    const pool   = [...tones, ...tones.map(n => ({...n, midiNote: n.midiNote+12}))];
+    let beat = start, idx = 0;
+    while (beat < end - 0.01) {
+      const src = pool[idx % pool.length];
+      arpNotes.push({
+        id: uid(), beatStart: beat,
+        duration: ARP * 0.85,
+        midiNote: src.midiNote,
+        velocity: 65 + Math.round(Math.sin(idx * 1.2) * 15 + 15) // gentle velocity swell
+      });
+      beat += ARP; idx++;
+    }
+  }
+
+  const mkTrack = (label, instrument, notes, color, volume, reverbSend, extraFx={}) => ({
+    id: uid(), label, instrument, color,
+    volume, muted: false, soloed: false, reverbSend,
+    notes,
+    effects: { ...DEFAULT_FX(), ...(INST_FILTER[instrument]||{}), ...extraFx }
+  });
+
+  return [
+    mkTrack('Chords',   'organ',  chordNotes, '#ffb74d', 0.7,  0.35, { filterCutoff:1200 }),
+    mkTrack('Bass',     'bass',   bassNotes,  '#81c784', 0.75, 0.08 ),
+    mkTrack('Arpeggio', 'pluck',  arpNotes,   '#ff6b6b', 0.45, 0.05 ),
+  ];
+}
+
+function importMidiFile(file) {
+  const reader = new FileReader();
+  reader.onload = async e => {
+    try {
+      const parsed = parseMidi(e.target.result);
+      const incomingTracks = parsed.sections['A'].tracks;
+      const sec = project.sections[activeSectionId];
+
+      const DRUM_INSTRUMENTS = new Set(['kick','snare','hat']);
+      const isDrum = t => DRUM_INSTRUMENTS.has(t.instrument);
+
+      // Detect whether incoming MIDI is drums or melodic
+      const incomingValues = Object.values(incomingTracks);
+      const incomingIsDrum = incomingValues.length > 0 && incomingValues.every(isDrum);
+
+      // Snapshot existing settings keyed by track label (stable across swaps)
+      // so volume, color, instrument choice, effects survive a MIDI swap
+      const savedSettings = {};
+      for (const t of Object.values(sec.tracks)) {
+        if (isDrum(t) === incomingIsDrum) {
+          savedSettings[t.label] = {
+            instrument: t.instrument,  // preserve user's instrument choice
+            volume:     t.volume,
+            muted:      t.muted,
+            soloed:     t.soloed,
+            reverbSend: t.reverbSend,
+            color:      t.color,
+            effects:    { ...t.effects },
+          };
+        }
+      }
+
+      // Remove only the matching type from the existing section
+      for (const [id, t] of Object.entries(sec.tracks)) {
+        if (isDrum(t) === incomingIsDrum) delete sec.tracks[id];
+      }
+
+      // Helper: apply saved settings onto a new track matched by label
+      const restoreSettings = track => {
+        const s = savedSettings[track.label];
+        if (!s) return track;
+        return { ...track,
+          instrument: s.instrument,  // keep user's chosen instrument
+          volume:     s.volume,
+          muted:      s.muted,
+          soloed:     s.soloed,
+          reverbSend: s.reverbSend,
+          color:      s.color,
+          effects:    { ...s.effects },
+        };
+      };
+
+      let added = 0;
+      if (!incomingIsDrum) {
+        const roles = expandChordRoles(incomingTracks);
+        if (roles) {
+          for (const track of roles) {
+            sec.tracks[track.id] = restoreSettings(track);
+            added++;
+          }
+        }
+      } else {
+        for (const track of incomingValues) {
+          sec.tracks[track.id] = restoreSettings(track);
+          added++;
+        }
+      }
+
+      // Expand section length if MIDI content is longer than current
+      let maxBeat = sec.lengthBars * 4;
+      for (const t of Object.values(sec.tracks))
+        for (const n of t.notes)
+          maxBeat = Math.max(maxBeat, n.beatStart + n.duration);
+      sec.lengthBars = Math.ceil(maxBeat / 4);
+
+      if (audioCtx) rebuildEngines();
+      renderTrackHeaders(); renderSectionUI();
+      PR.gridDirty=true; PR.dirty=true; schedRedraw(); saveProject();
+      setStatus(`Added ${added} track${added!==1?'s':''} to Section ${activeSectionId}`);
+    } catch(err) { setStatus('MIDI import error: '+err.message, true); }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+// Drag-and-drop MIDI
+document.addEventListener('dragover', e => {
+  e.preventDefault();
+  const ol = document.getElementById('drop-overlay');
+  ol.textContent = `Drop MIDI → add to Section ${activeSectionId}`;
+  ol.classList.add('visible');
+});
+document.addEventListener('dragleave', e => { if(!e.relatedTarget||e.relatedTarget===document.documentElement) document.getElementById('drop-overlay').classList.remove('visible'); });
+document.addEventListener('drop', e => {
+  e.preventDefault();
+  document.getElementById('drop-overlay').classList.remove('visible');
+  const file = e.dataTransfer.files[0];
+  if (file && (file.name.endsWith('.mid')||file.name.endsWith('.midi'))) importMidiFile(file);
+  else setStatus('Drop a .mid file to import', true);
+});
+
+// ── WAV BOUNCE ─────────────────────────────────────────────────────
+async function bounceWav() {
+  const bpm = project.tempo;
+  // Calculate total duration
+  let totalBars = 0;
+  for (const id of project.sectionOrder) totalBars += (project.sections[id]?.lengthBars||2);
+  const totalBeats = totalBars * 4;
+  const totalSecs  = totalBeats * 60 / bpm + 1.5; // 1.5s tail
+
+  setStatus('Bouncing… this may take a moment');
+  const AC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+  const oCtx = new AC(2, Math.ceil(totalSecs * 44100), 44100);
+
+  // Recreate master chain in offline context
+  const oNoise = createNoiseBuffer(oCtx);
+  const oReverb = oCtx.createConvolver(); oReverb.buffer = buildReverbIR(oCtx, 2);
+  const oDelay  = oCtx.createDelay(2); oDelay.delayTime.value = 0.375;
+  const oDlyFB  = oCtx.createGain(); oDlyFB.gain.value = 0.35;
+  oDelay.connect(oDlyFB); oDlyFB.connect(oDelay);
+  const oRvRet  = oCtx.createGain(); oRvRet.gain.value = 0.5; oReverb.connect(oRvRet);
+  const oDlRet  = oCtx.createGain(); oDlRet.gain.value = 0.4; oDelay.connect(oDlRet);
+  const oComp   = oCtx.createDynamicsCompressor();
+  oComp.threshold.value=-18; oComp.ratio.value=6; oComp.knee.value=8;
+  const oLim    = oCtx.createDynamicsCompressor();
+  oLim.threshold.value=-3; oLim.ratio.value=20; oLim.knee.value=0; oLim.attack.value=0.001; oLim.release.value=0.05;
+  const oBus    = oCtx.createGain(); oBus.gain.value = project.masterFx.masterVolume;
+  oRvRet.connect(oComp); oDlRet.connect(oComp); oBus.connect(oComp);
+  oComp.connect(oLim); oLim.connect(oCtx.destination);
+
+  // Schedule all sections
+  let tOffset = 0;
+  const savedCtx = audioCtx, savedNoise = noiseBuffer, savedBus = masterBus, savedRev = sharedReverb, savedDly = sharedDelay;
+  audioCtx = oCtx; noiseBuffer = oNoise; masterBus = oBus; sharedReverb = oReverb; sharedDelay = oDelay;
+
+  for (const secId of project.sectionOrder) {
+    const sec = project.sections[secId];
+    if (!sec) continue;
+    const secLenSecs = sec.lengthBars * 4 * 60 / bpm;
+    for (const track of Object.values(sec.tracks)) {
+      if (track.muted) continue;
+      const tGain = oCtx.createGain(); tGain.gain.value = track.volume;
+      const tDry  = oCtx.createGain(); tDry.connect(oBus);
+      const tRv   = oCtx.createGain(); tRv.gain.value = track.reverbSend * track.effects.reverbMix; tRv.connect(oReverb);
+      tGain.connect(tDry); tGain.connect(tRv);
+      for (const note of track.notes) {
+        const t = tOffset + note.beatStart * 60 / bpm;
+        playNote(track.instrument, midiToHz(note.midiNote), note.duration*60/bpm, t, tGain);
+      }
+    }
+    tOffset += secLenSecs;
+  }
+
+  audioCtx = savedCtx; noiseBuffer = savedNoise; masterBus = savedBus; sharedReverb = savedReverb; sharedDelay = savedDly;
+
+  const rendered = await oCtx.startRendering();
+  const blob = audioBufferToWav(rendered);
+  const a = document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=(project.title||'bounce')+'.wav'; a.click();
+  setStatus('WAV exported');
+}
+
+function audioBufferToWav(buf) {
+  const nCh=buf.numberOfChannels, sr=buf.sampleRate;
+  const chs=[]; for(let i=0;i<nCh;i++) chs.push(buf.getChannelData(i));
+  const pcm=new Float32Array(buf.length*nCh);
+  for(let i=0;i<buf.length;i++) for(let c=0;c<nCh;c++) pcm[i*nCh+c]=chs[c][i];
+  const dataLen=pcm.length*2, ab=new ArrayBuffer(44+dataLen), v=new DataView(ab);
+  const ws=(o,s)=>{for(let i=0;i<s.length;i++)v.setUint8(o+i,s.charCodeAt(i));};
+  ws(0,'RIFF'); v.setUint32(4,36+dataLen,true); ws(8,'WAVE'); ws(12,'fmt ');
+  v.setUint32(16,16,true); v.setUint16(20,1,true); v.setUint16(22,nCh,true);
+  v.setUint32(24,sr,true); v.setUint32(28,sr*nCh*2,true); v.setUint16(32,nCh*2,true);
+  v.setUint16(34,16,true); ws(36,'data'); v.setUint32(40,dataLen,true);
+  let o=44; for(let i=0;i<pcm.length;i++){const s=Math.max(-1,Math.min(1,pcm[i])); v.setInt16(o,s<0?s*0x8000:s*0x7FFF,true); o+=2;}
+  return new Blob([ab],{type:'audio/wav'});
+}
+
+// ── DEMO PROJECT ───────────────────────────────────────────────────
+// B minor pentatonic: B(59), D(62), E(64), F#(66), A(69), B(71)
+// Bass drone: B2=47, B3=59
+function makeDemoProject() {
+  const bellNotes = [
+    // Bar 1
+    [0,    71, 0.5], [0.5,  69, 0.5], [1,   66, 0.5], [1.5, 64, 0.5],
+    [2,    62, 1.0], [3,    64, 0.5], [3.5, 66, 0.5],
+    // Bar 2
+    [4,    69, 1.0], [5,    71, 0.5], [5.5, 69, 0.5],
+    [6,    66, 1.0], [7,    64, 1.0],
+  ];
+  const bellNotes2 = [
+    // Bar 1 — slightly different
+    [0, 64, 0.5],[0.5,66,0.5],[1,69,1],[2,71,0.5],[2.5,69,0.5],[3,66,1],
+    // Bar 2
+    [4,64,0.5],[4.5,62,0.5],[5,59,1],[6,62,1],[7,64,1],
+  ];
+  const bassNotes = [
+    [0,47,2],[2,47,2],[4,47,2],[6,47,2], // B2 whole section
+  ];
+  const pluckNotes = [
+    [0,64,1],[1,62,1],[2,59,1],[3,57,1],[4,59,2],[6,62,1],[7,64,1],
+  ];
+  const mkNotes = arr => arr.map(([bs,mn,dur]) => makeNote(bs,mn,dur,100));
+
+  const bell1Id = uid(), bass1Id = uid(), bell2Id = uid(), bass2Id = uid(), pluckId = uid(), bellCId = uid();
+
+  const secA = {
+    id:'A', label:'A', lengthBars:2,
+    tracks: {
+      [bell1Id]: {
+        id:bell1Id, label:'Bell Lead', instrument:'bell', color:'#7c6aff',
+        volume:0.8, muted:false, soloed:false, reverbSend:0.35,
+        notes: mkNotes(bellNotes), effects:DEFAULT_FX()
+      },
+    }
+  };
+  const secB = {
+    id:'B', label:'B', lengthBars:2,
+    tracks: {
+      [bell2Id]: {
+        id:bell2Id, label:'Bell Lead', instrument:'bell', color:'#7c6aff',
+        volume:0.75, muted:false, soloed:false, reverbSend:0.35,
+        notes: mkNotes(bellNotes2), effects:DEFAULT_FX()
+      },
+      [bass1Id]: {
+        id:bass1Id, label:'Bass Drone', instrument:'bass', color:'#4fc3f7',
+        volume:0.7, muted:false, soloed:false, reverbSend:0.1,
+        notes: mkNotes(bassNotes), effects:{...DEFAULT_FX(), ...INST_FILTER.bass}
+      },
+    }
+  };
+
+  // Drum notes for section C (kick=36 midi, snare=38, hat=42 — but instrument handles synthesis)
+  const kickNotes   = [0,1,2,3,4,5,6,7].map(b=>makeNote(b,36,0.25,100));
+  const snareNotes  = [1,3,5,7].map(b=>makeNote(b,38,0.25,90));
+  const hatNotes    = [0,0.5,1,1.5,2,2.5,3,3.5,4,4.5,5,5.5,6,6.5,7,7.5].map(b=>makeNote(b,42,0.125,70));
+  const kickId=uid(), snareId=uid(), hatId=uid();
+
+  const secC = {
+    id:'C', label:'C', lengthBars:2,
+    tracks: {
+      [bellCId]: {
+        id:bellCId, label:'Bell Lead', instrument:'bell', color:'#7c6aff',
+        volume:0.7, muted:false, soloed:false, reverbSend:0.3,
+        notes: mkNotes(bellNotes), effects:DEFAULT_FX()
+      },
+      [bass2Id]: {
+        id:bass2Id, label:'Bass Drone', instrument:'bass', color:'#4fc3f7',
+        volume:0.65, muted:false, soloed:false, reverbSend:0.1,
+        notes: mkNotes(bassNotes), effects:{...DEFAULT_FX(), ...INST_FILTER.bass}
+      },
+      [pluckId]: {
+        id:pluckId, label:'Pluck', instrument:'pluck', color:'#81c784',
+        volume:0.7, muted:false, soloed:false, reverbSend:0.2,
+        notes: mkNotes(pluckNotes), effects:DEFAULT_FX()
+      },
+      [kickId]: {
+        id:kickId, label:'Kick', instrument:'kick', color:'#ff6b6b',
+        volume:0.9, muted:false, soloed:false, reverbSend:0,
+        notes: kickNotes, effects:{...DEFAULT_FX(), ...INST_FILTER.kick}
+      },
+      [snareId]: {
+        id:snareId, label:'Snare', instrument:'snare', color:'#ffb74d',
+        volume:0.8, muted:false, soloed:false, reverbSend:0.1,
+        notes: snareNotes, effects:{...DEFAULT_FX(), ...INST_FILTER.snare}
+      },
+      [hatId]: {
+        id:hatId, label:'Hat', instrument:'hat', color:'#f06292',
+        volume:0.6, muted:false, soloed:false, reverbSend:0,
+        notes: hatNotes, effects:{...DEFAULT_FX(), ...INST_FILTER.hat}
+      },
+    }
+  };
+
+  return {
+    version:2, title:'B Minor Pentatonic', tempo:80,
+    sectionOrder:['A','B','C'],
+    sections:{ A:secA, B:secB, C:secC },
+    masterFx: DEFAULT_MASTER_FX(),
+  };
+}
+
+function loadDemo() {
+  pushUndo();
+  project = makeDemoProject();
+  activeSectionId = 'A';
+  if (audioCtx) rebuildEngines();
+  renderTrackHeaders(); renderSectionUI();
+  PR.scrollBeat = 0;
+  // Scroll to note range (~MIDI 45-75)
+  PR.scrollPitchPx = Math.max(0, (MIDI_MAX - 80) * PR.rowHeight - (PR.height - RULER_H) * 0.3);
+  PR.gridDirty = true; PR.dirty = true; schedRedraw(); saveProject();
+  setStatus('Demo loaded — B minor pentatonic at 80 BPM · Press Play');
+}
+
+// ── KEYBOARD SHORTCUTS ─────────────────────────────────────────────
+document.addEventListener('keydown', async e => {
+  if (e.target.tagName==='INPUT'||e.target.tagName==='SELECT'||e.target.tagName==='TEXTAREA') return;
+  if (e.ctrlKey||e.metaKey) {
+    if (e.key==='z') { e.preventDefault(); performUndo(); }
+    return;
+  }
+  switch(e.key) {
+    case ' ':
+      e.preventDefault();
+      if (isPlaying) { stopPlayback(); }
+      else { await ensureAudio(); if (!audioCtx) break; startPlayback(0); }
+      break;
+    case 'd': case 'D': setTool('pencil'); break;
+    case 's': case 'S': setTool('pointer'); break;
+    case 'e': case 'E': setTool('eraser'); break;
+    case '+': case '=': zoomIn(); break;
+    case '-': case '_': zoomOut(); break;
+  }
+});
+
+function setTool(name) {
+  activeTool = name;
+  ['pencil','pointer','eraser'].forEach(t => {
+    document.getElementById('tool-'+t).classList.toggle('active', t===name);
+  });
+  noteCanvas.style.cursor = name==='eraser'?'cell':name==='pointer'?'default':'crosshair';
+}
+
+// ── MASTER CONTROLS ────────────────────────────────────────────────
+function hissLabel(v) {
+  if (v <= 0.001) return 'off';
+  if (v <= 0.006) return 'low';
+  if (v <= 0.013) return 'mid';
+  return 'high';
+}
+
+function syncMasterStrip() {
+  const fx = project.masterFx;
+  document.getElementById('mc-vol').value  = fx.masterVolume;
+  document.getElementById('mc-vol-val').textContent = fx.masterVolume.toFixed(2);
+  document.getElementById('mc-bass').value = fx.bassGain;
+  document.getElementById('mc-bass-val').textContent = (fx.bassGain >= 0 ? '+' : '') + fx.bassGain + ' dB';
+  document.getElementById('mc-comp').value = fx.compThreshold;
+  document.getElementById('mc-comp-val').textContent = fx.compThreshold;
+  document.getElementById('mc-hiss').value = fx.hissLevel;
+  document.getElementById('mc-hiss-val').textContent = hissLabel(fx.hissLevel);
+}
+
+
+document.getElementById('mc-vol').addEventListener('input', async e => {
+  const v = +e.target.value;
+  document.getElementById('mc-vol-val').textContent = v.toFixed(2);
+  project.masterFx.masterVolume = v;
+  await ensureAudio();
+  if (masterBus) masterBus.gain.setTargetAtTime(v, audioCtx.currentTime, 0.02);
+  saveProject();
+});
+document.getElementById('mc-bass').addEventListener('input', async e => {
+  const v = +e.target.value;
+  document.getElementById('mc-bass-val').textContent = (v >= 0 ? '+' : '') + v + ' dB';
+  project.masterFx.bassGain = v;
+  await ensureAudio();
+  if (bassBoost) bassBoost.gain.setTargetAtTime(v, audioCtx.currentTime, 0.02);
+  saveProject();
+});
+document.getElementById('mc-comp').addEventListener('input', async e => {
+  const v = +e.target.value;
+  document.getElementById('mc-comp-val').textContent = v;
+  project.masterFx.compThreshold = v;
+  await ensureAudio();
+  if (compressor) compressor.threshold.setTargetAtTime(v, audioCtx.currentTime, 0.02);
+  saveProject();
+});
+document.getElementById('mc-hiss').addEventListener('input', async e => {
+  const v = +e.target.value;
+  document.getElementById('mc-hiss-val').textContent = hissLabel(v);
+  project.masterFx.hissLevel = v;
+  await ensureAudio();
+  // Only update live gain if currently playing (otherwise it stays silent until next play)
+  if (hissGainNode && isPlaying) hissGainNode.gain.setTargetAtTime(v, audioCtx.currentTime, 0.3);
+  saveProject();
+});
+
+// ── TRANSPORT WIRING ───────────────────────────────────────────────
+document.getElementById('btn-play').addEventListener('click', async () => {
+  await ensureAudio();
+  if (isPlaying) stopPlayback();
+  else startPlayback(0);
+});
+document.getElementById('btn-stop').addEventListener('click', () => {
+  stopPlayback();
+  playStartBeat = 0;
+  document.getElementById('playhead-time').textContent = '0:00';
+  PR.dirty = true; schedRedraw();
+});
+document.getElementById('bpm-input').addEventListener('input', e => {
+  project.tempo = clamp(+e.target.value||120, 20, 400);
+  saveProject();
+});
+document.getElementById('quant-sel').addEventListener('change', e => {
+  quantSnap = +e.target.value;
+});
+document.getElementById('btn-undo').addEventListener('click', performUndo);
+document.getElementById('btn-export-midi').addEventListener('click', async () => { await ensureAudio(); exportMidi(); });
+document.getElementById('btn-import-midi').addEventListener('click', () => document.getElementById('midi-file-input').click());
+document.getElementById('midi-file-input').addEventListener('change', e => { if(e.target.files[0]) importMidiFile(e.target.files[0]); e.target.value=''; });
+document.getElementById('btn-export-wav').addEventListener('click', async () => { await ensureAudio(); bounceWav(); });
+document.getElementById('btn-load-demo').addEventListener('click', loadDemo);
+document.getElementById('btn-reset').addEventListener('click', () => {
+  if (confirm('Clear all saved state and start with a blank project?')) {
+    localStorage.removeItem('daw-v2');
+    project = makeProject();
+    activeSectionId = 'A';
+    if (audioCtx) rebuildEngines();
+    renderTrackHeaders();
+    renderSectionUI();
+    syncMasterStrip();
+    PR.scrollBeat=0; PR.gridDirty=true; PR.dirty=true; schedRedraw();
+    setStatus('Reset — blank project');
+  }
+});
+document.getElementById('btn-add-track').addEventListener('click', async () => { await ensureAudio(); addTrack(); });
+document.getElementById('btn-add-section').addEventListener('click', addSection);
+
+// ── INIT ───────────────────────────────────────────────────────────
+function init() {
+  if (!loadSaved()) {
+    project = makeProject();
+    activeSectionId = 'A';
+  }
+  document.getElementById('bpm-input').value = project.tempo;
+  syncMasterStrip();
+
+  renderTrackHeaders();
+  renderSectionUI();
+
+  // Initial piano roll scroll — center on MIDI ~60-72 range
+  window.addEventListener('resize', () => { PR.gridDirty=true; PR.dirty=true; schedRedraw(); });
+  // Wait a frame so layout is computed
+  requestAnimationFrame(() => {
+    resizeCanvases();
+    PR.scrollPitchPx = Math.max(0, (MIDI_MAX - 80) * PR.rowHeight - (PR.height - RULER_H) * 0.35);
+    PR.gridDirty=true; PR.dirty=true; schedRedraw();
+  });
+}
+
+init();
+</script>
+</body>
+</html>
