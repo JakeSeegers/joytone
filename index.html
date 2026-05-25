@@ -176,6 +176,53 @@ input[type=range]{cursor:pointer}
   pointer-events:none
 }
 #drop-overlay.visible{display:flex}
+
+/* ── LIBRARY MODAL ───────────────────────────────────────────────── */
+#lib-modal{
+  display:none;position:fixed;inset:0;background:rgba(0,0,0,.82);
+  z-index:1000;align-items:flex-start;justify-content:center;padding-top:40px
+}
+#lib-modal.open{display:flex}
+#lib-box{
+  background:#1e1e2e;border:1px solid #444;border-radius:8px;
+  width:700px;max-width:96vw;max-height:80vh;display:flex;flex-direction:column;
+  box-shadow:0 8px 40px #000a
+}
+#lib-header{
+  display:flex;align-items:center;gap:8px;padding:10px 14px;
+  border-bottom:1px solid #333;flex-shrink:0
+}
+#lib-header h3{margin:0;font-size:14px;color:#cdf;flex:1}
+#lib-tabs{display:flex;gap:4px}
+.lib-tab{
+  padding:4px 14px;border:1px solid #555;border-radius:4px;
+  background:#2a2a3e;color:#aaa;cursor:pointer;font-size:12px
+}
+.lib-tab.active{background:#4455aa;color:#fff;border-color:#6677cc}
+#lib-filters{
+  padding:8px 14px;display:flex;gap:8px;flex-wrap:wrap;flex-shrink:0;
+  border-bottom:1px solid #2a2a3a
+}
+#lib-filters select,#lib-filters input{
+  background:#252535;color:#ccc;border:1px solid #444;border-radius:4px;
+  padding:3px 6px;font-size:12px
+}
+#lib-filters input{flex:1;min-width:120px}
+#lib-list{overflow-y:auto;flex:1;padding:6px 0}
+.lib-row{
+  display:flex;align-items:center;gap:8px;padding:5px 14px;
+  border-bottom:1px solid #1a1a28;cursor:pointer
+}
+.lib-row:hover{background:#2a2a40}
+.lib-row-info{flex:1;min-width:0}
+.lib-row-title{font-size:12px;color:#ddd;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lib-row-meta{font-size:10px;color:#888;margin-top:1px}
+.lib-row-load{
+  padding:3px 10px;background:#3a5a9a;border:none;border-radius:4px;
+  color:#cdf;font-size:11px;cursor:pointer;flex-shrink:0
+}
+.lib-row-load:hover{background:#4a6abc}
+#lib-status{padding:8px 14px;font-size:11px;color:#888;flex-shrink:0;text-align:center}
 </style>
 </head>
 <body>
@@ -213,6 +260,7 @@ input[type=range]{cursor:pointer}
     <input type="file" id="midi-file-input" accept=".mid,.midi" style="display:none">
     <button id="btn-export-wav" title="Bounce to WAV">⬇ WAV</button>
     <div class="sep"></div>
+    <button id="btn-library" title="Browse MIDI library">📚 Library</button>
     <button id="btn-load-demo" title="Load demo song">★ Demo</button>
     <button id="btn-reset" title="Clear saved state and start fresh" style="color:#f88">⊘ Reset</button>
   </div>
@@ -287,6 +335,27 @@ input[type=range]{cursor:pointer}
 
 <!-- MIDI drop overlay -->
 <div id="drop-overlay">Drop MIDI file to import</div>
+
+<!-- ── LIBRARY MODAL ──────────────────────────────────────────────── -->
+<div id="lib-modal">
+  <div id="lib-box">
+    <div id="lib-header">
+      <h3>📚 MIDI Library</h3>
+      <div id="lib-tabs">
+        <button class="lib-tab active" data-deck="chords">Chords</button>
+        <button class="lib-tab" data-deck="drums">Drums</button>
+      </div>
+      <button id="lib-close" style="background:none;border:none;color:#888;font-size:18px;cursor:pointer;padding:0 4px">✕</button>
+    </div>
+    <div id="lib-filters">
+      <!-- filled by JS per tab -->
+    </div>
+    <div id="lib-list">
+      <!-- filled by JS -->
+    </div>
+    <div id="lib-status">Loading library…</div>
+  </div>
+</div>
 
 <script>
 'use strict';
@@ -2330,6 +2399,184 @@ document.getElementById('mc-hiss').addEventListener('input', async e => {
   // Only update live gain if currently playing (otherwise it stays silent until next play)
   if (hissGainNode && isPlaying) hissGainNode.gain.setTargetAtTime(v, audioCtx.currentTime, 0.3);
   saveProject();
+});
+
+// ── MIDI LIBRARY BROWSER ──────────────────────────────────────────
+let manifestCache = null;
+let libDeck = 'chords'; // 'chords' | 'drums'
+
+async function loadManifest() {
+  if (manifestCache) return manifestCache;
+  const r = await fetch('midi-manifest.json');
+  if (!r.ok) throw new Error('Could not load midi-manifest.json');
+  manifestCache = await r.json();
+  return manifestCache;
+}
+
+async function importMidiFromUrl(path) {
+  const r = await fetch(path);
+  if (!r.ok) throw new Error('Failed to fetch ' + path);
+  const buf = await r.arrayBuffer();
+  // Re-use importMidiFile logic by wrapping ArrayBuffer as a fake File read
+  try {
+    const parsed = parseMidi(buf);
+    const incomingTracks = parsed.sections['A'].tracks;
+    const sec = project.sections[activeSectionId];
+    const DRUM_INSTRUMENTS = new Set(['kick','snare','hat']);
+    const isDrum = t => DRUM_INSTRUMENTS.has(t.instrument);
+    const incomingValues = Object.values(incomingTracks);
+    const incomingIsDrum = incomingValues.length > 0 && incomingValues.every(isDrum);
+    const savedSettings = {};
+    for (const t of Object.values(sec.tracks)) {
+      if (isDrum(t) === incomingIsDrum) {
+        savedSettings[t.label] = { instrument:t.instrument, volume:t.volume,
+          muted:t.muted, soloed:t.soloed, reverbSend:t.reverbSend,
+          color:t.color, effects:{...t.effects} };
+      }
+    }
+    for (const [id, t] of Object.entries(sec.tracks)) {
+      if (isDrum(t) === incomingIsDrum) delete sec.tracks[id];
+    }
+    const restoreSettings = track => {
+      const s = savedSettings[track.label];
+      if (!s) return track;
+      return { ...track, instrument:s.instrument, volume:s.volume,
+        muted:s.muted, soloed:s.soloed, reverbSend:s.reverbSend,
+        color:s.color, effects:{...s.effects} };
+    };
+    let added = 0;
+    if (!incomingIsDrum) {
+      const roles = expandChordRoles(incomingTracks);
+      if (roles) { for (const track of roles) { sec.tracks[track.id] = restoreSettings(track); added++; } }
+    } else {
+      for (const track of incomingValues) { sec.tracks[track.id] = restoreSettings(track); added++; }
+    }
+    let maxBeat = sec.lengthBars * 4;
+    for (const t of Object.values(sec.tracks))
+      for (const n of t.notes) maxBeat = Math.max(maxBeat, n.beatStart + n.duration);
+    sec.lengthBars = Math.ceil(maxBeat / 4);
+    if (audioCtx) rebuildEngines();
+    renderTrackHeaders(); renderSectionUI();
+    PR.gridDirty=true; PR.dirty=true; schedRedraw(); saveProject();
+    setStatus(`Added ${added} track${added!==1?'s':''} to Section ${activeSectionId} from library`);
+  } catch(err) { setStatus('Library import error: '+err.message, true); }
+}
+
+function renderLibraryFilters() {
+  const f = document.getElementById('lib-filters');
+  if (libDeck === 'chords') {
+    f.innerHTML = `
+      <select id="lf-category">
+        <option value="">All categories</option>
+        <option>Major</option><option>Minor</option><option>Modal</option>
+      </select>
+      <select id="lf-key">
+        <option value="">Any key</option>
+        ${['A','Bb','B','C','C#','D','Eb','E','F','F#','G','Ab']
+          .map(k=>`<option>${k}</option>`).join('')}
+      </select>
+      <input id="lf-mood" type="text" placeholder="Search mood / progression…">`;
+  } else {
+    f.innerHTML = `
+      <select id="lf-feel">
+        <option value="">All feels</option>
+        <option value="4otf">4 On The Floor</option>
+        <option value="groovy">Groovy</option>
+        <option value="halftime">Half-time</option>
+        <option value="percussion">Percussion</option>
+      </select>
+      <select id="lf-genre">
+        <option value="">Any genre</option>
+        ${['House','Funk','HipHop','Jazz','Rock','Soul','Afro','Latin','RnB','Pop','Trap']
+          .map(g=>`<option>${g}</option>`).join('')}
+      </select>`;
+  }
+  f.querySelectorAll('select,input').forEach(el =>
+    el.addEventListener('input', renderLibraryList));
+}
+
+function renderLibraryList() {
+  if (!manifestCache) return;
+  const list = document.getElementById('lib-list');
+  const status = document.getElementById('lib-status');
+
+  let entries = manifestCache.filter(e => e.deck === libDeck);
+
+  if (libDeck === 'chords') {
+    const cat  = document.getElementById('lf-category')?.value || '';
+    const key  = document.getElementById('lf-key')?.value || '';
+    const mood = (document.getElementById('lf-mood')?.value || '').toLowerCase();
+    if (cat)  entries = entries.filter(e => e.category === cat);
+    if (key)  entries = entries.filter(e => e.key === key);
+    if (mood) entries = entries.filter(e =>
+      (e.moods||[]).some(m => m.toLowerCase().includes(mood)) ||
+      (e.progression||'').toLowerCase().includes(mood));
+  } else {
+    const feel  = document.getElementById('lf-feel')?.value || '';
+    const genre = (document.getElementById('lf-genre')?.value || '').toLowerCase();
+    if (feel)  entries = entries.filter(e => e.feel === feel);
+    if (genre) entries = entries.filter(e => (e.genre||'').toLowerCase() === genre);
+  }
+
+  status.textContent = `${entries.length} file${entries.length!==1?'s':''} found`;
+  const show = entries.slice(0, 200);
+  list.innerHTML = show.map(e => {
+    const title = libDeck === 'chords'
+      ? `${e.key} · ${e.progression}`
+      : `${e.genre} ${e.feel} #${e.index}`;
+    const meta = libDeck === 'chords'
+      ? `${e.category} · ${(e.moods||[]).join(', ')}`
+      : `${e.feel}${e.density?' · '+e.density:''}`;
+    return `<div class="lib-row">
+      <div class="lib-row-info">
+        <div class="lib-row-title">${title}</div>
+        <div class="lib-row-meta">${meta}</div>
+      </div>
+      <button class="lib-row-load" data-path="${e.path}">Load</button>
+    </div>`;
+  }).join('');
+  if (entries.length > 200) {
+    list.innerHTML += `<div style="padding:8px 14px;font-size:11px;color:#666">
+      Showing 200 of ${entries.length} — use filters to narrow down</div>`;
+  }
+  list.querySelectorAll('.lib-row-load').forEach(btn =>
+    btn.addEventListener('click', async () => {
+      const path = btn.dataset.path;
+      document.getElementById('lib-modal').classList.remove('open');
+      setStatus('Loading from library…');
+      await importMidiFromUrl(path);
+    }));
+}
+
+async function openLibrary() {
+  document.getElementById('lib-modal').classList.add('open');
+  renderLibraryFilters();
+  if (!manifestCache) {
+    document.getElementById('lib-list').innerHTML = '';
+    document.getElementById('lib-status').textContent = 'Loading library…';
+    try { await loadManifest(); }
+    catch(e) {
+      document.getElementById('lib-status').textContent = 'Error: ' + e.message;
+      return;
+    }
+  }
+  renderLibraryList();
+}
+
+document.getElementById('btn-library').addEventListener('click', openLibrary);
+document.getElementById('lib-close').addEventListener('click', () =>
+  document.getElementById('lib-modal').classList.remove('open'));
+document.getElementById('lib-modal').addEventListener('click', e => {
+  if (e.target === document.getElementById('lib-modal'))
+    document.getElementById('lib-modal').classList.remove('open');
+});
+document.getElementById('lib-tabs').addEventListener('click', e => {
+  const tab = e.target.closest('.lib-tab');
+  if (!tab) return;
+  libDeck = tab.dataset.deck;
+  document.querySelectorAll('.lib-tab').forEach(t => t.classList.toggle('active', t === tab));
+  renderLibraryFilters();
+  renderLibraryList();
 });
 
 // ── TRANSPORT WIRING ───────────────────────────────────────────────
