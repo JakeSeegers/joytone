@@ -448,6 +448,7 @@ let playStartBeat    = 0;     // beat position at play press
 let scheduleCursor   = 0;     // beat position of scheduler lookahead cursor
 let currentSectionPlayIdx = 0;// index into project.sectionOrder
 let sectionBeatOffset = 0;    // beat offset where current section started
+let pendingMidiSwap   = null; // { sectionId, applyFn } — deferred MIDI import
 
 // Piano roll view
 const PR = {
@@ -1148,6 +1149,10 @@ function scheduleAhead() {
 
     scheduleCursor = sectionBeatOffset + sliceEnd;
     if (sliceEnd >= secLenBeats) {
+      if (pendingMidiSwap && pendingMidiSwap.sectionId === secId) {
+        pendingMidiSwap.applyFn();
+        pendingMidiSwap = null;
+      }
       sectionBeatOffset += secLenBeats;
       currentSectionPlayIdx++;
     } else {
@@ -2025,85 +2030,81 @@ function expandChordRoles(incomingTracks) {
   ];
 }
 
+// Compute what a MIDI import would change (read-only — no mutation yet)
+function prepareImport(incomingTracks, targetSectionId) {
+  const sec = project.sections[targetSectionId];
+  const DRUM_INSTRUMENTS = new Set(['kick','snare','hat']);
+  const isDrum = t => DRUM_INSTRUMENTS.has(t.instrument);
+  const incomingValues = Object.values(incomingTracks);
+  const incomingIsDrum = incomingValues.length > 0 && incomingValues.every(isDrum);
+
+  const savedSettings = {};
+  for (const t of Object.values(sec.tracks)) {
+    if (isDrum(t) === incomingIsDrum) {
+      savedSettings[t.label] = { instrument:t.instrument, volume:t.volume,
+        muted:t.muted, soloed:t.soloed, reverbSend:t.reverbSend,
+        color:t.color, effects:{...t.effects} };
+    }
+  }
+  const restore = track => {
+    const s = savedSettings[track.label];
+    return s ? { ...track, instrument:s.instrument, volume:s.volume,
+      muted:s.muted, soloed:s.soloed, reverbSend:s.reverbSend,
+      color:s.color, effects:{...s.effects} } : track;
+  };
+
+  const toDelete = Object.entries(sec.tracks)
+    .filter(([,t]) => isDrum(t) === incomingIsDrum).map(([id]) => id);
+
+  let toAdd = [];
+  if (!incomingIsDrum) {
+    const roles = expandChordRoles(incomingTracks);
+    if (roles) toAdd = roles.map(restore);
+  } else {
+    toAdd = incomingValues.map(restore);
+  }
+
+  // Simulate resulting section to compute new length
+  const simTracks = { ...sec.tracks };
+  for (const id of toDelete) delete simTracks[id];
+  for (const t of toAdd) simTracks[t.id] = t;
+  let maxBeat = sec.lengthBars * 4;
+  for (const t of Object.values(simTracks))
+    for (const n of t.notes) maxBeat = Math.max(maxBeat, n.beatStart + n.duration);
+
+  return { toDelete, toAdd, newLengthBars: Math.ceil(maxBeat / 4) };
+}
+
+// Apply a prepared import and refresh UI
+function applyImport(prepared, targetSectionId) {
+  const sec = project.sections[targetSectionId];
+  for (const id of prepared.toDelete) delete sec.tracks[id];
+  for (const t of prepared.toAdd) sec.tracks[t.id] = t;
+  sec.lengthBars = prepared.newLengthBars;
+  if (audioCtx) rebuildEngines();
+  renderTrackHeaders(); renderSectionUI();
+  PR.gridDirty=true; PR.dirty=true; schedRedraw(); saveProject();
+  const n = prepared.toAdd.length;
+  setStatus(`Added ${n} track${n!==1?'s':''} to Section ${targetSectionId}`);
+}
+
+// Queue or immediately apply a prepared import
+function scheduleImport(prepared, targetSectionId) {
+  if (isPlaying) {
+    pendingMidiSwap = { sectionId: targetSectionId,
+      applyFn: () => applyImport(prepared, targetSectionId) };
+    setStatus(`Changes queued — takes effect at next loop boundary`);
+  } else {
+    applyImport(prepared, targetSectionId);
+  }
+}
+
 function importMidiFile(file) {
   const reader = new FileReader();
-  reader.onload = async e => {
+  reader.onload = e => {
     try {
       const parsed = parseMidi(e.target.result);
-      const incomingTracks = parsed.sections['A'].tracks;
-      const sec = project.sections[activeSectionId];
-
-      const DRUM_INSTRUMENTS = new Set(['kick','snare','hat']);
-      const isDrum = t => DRUM_INSTRUMENTS.has(t.instrument);
-
-      // Detect whether incoming MIDI is drums or melodic
-      const incomingValues = Object.values(incomingTracks);
-      const incomingIsDrum = incomingValues.length > 0 && incomingValues.every(isDrum);
-
-      // Snapshot existing settings keyed by track label (stable across swaps)
-      // so volume, color, instrument choice, effects survive a MIDI swap
-      const savedSettings = {};
-      for (const t of Object.values(sec.tracks)) {
-        if (isDrum(t) === incomingIsDrum) {
-          savedSettings[t.label] = {
-            instrument: t.instrument,  // preserve user's instrument choice
-            volume:     t.volume,
-            muted:      t.muted,
-            soloed:     t.soloed,
-            reverbSend: t.reverbSend,
-            color:      t.color,
-            effects:    { ...t.effects },
-          };
-        }
-      }
-
-      // Remove only the matching type from the existing section
-      for (const [id, t] of Object.entries(sec.tracks)) {
-        if (isDrum(t) === incomingIsDrum) delete sec.tracks[id];
-      }
-
-      // Helper: apply saved settings onto a new track matched by label
-      const restoreSettings = track => {
-        const s = savedSettings[track.label];
-        if (!s) return track;
-        return { ...track,
-          instrument: s.instrument,  // keep user's chosen instrument
-          volume:     s.volume,
-          muted:      s.muted,
-          soloed:     s.soloed,
-          reverbSend: s.reverbSend,
-          color:      s.color,
-          effects:    { ...s.effects },
-        };
-      };
-
-      let added = 0;
-      if (!incomingIsDrum) {
-        const roles = expandChordRoles(incomingTracks);
-        if (roles) {
-          for (const track of roles) {
-            sec.tracks[track.id] = restoreSettings(track);
-            added++;
-          }
-        }
-      } else {
-        for (const track of incomingValues) {
-          sec.tracks[track.id] = restoreSettings(track);
-          added++;
-        }
-      }
-
-      // Expand section length if MIDI content is longer than current
-      let maxBeat = sec.lengthBars * 4;
-      for (const t of Object.values(sec.tracks))
-        for (const n of t.notes)
-          maxBeat = Math.max(maxBeat, n.beatStart + n.duration);
-      sec.lengthBars = Math.ceil(maxBeat / 4);
-
-      if (audioCtx) rebuildEngines();
-      renderTrackHeaders(); renderSectionUI();
-      PR.gridDirty=true; PR.dirty=true; schedRedraw(); saveProject();
-      setStatus(`Added ${added} track${added!==1?'s':''} to Section ${activeSectionId}`);
+      scheduleImport(prepareImport(parsed.sections['A'].tracks, activeSectionId), activeSectionId);
     } catch(err) { setStatus('MIDI import error: '+err.message, true); }
   };
   reader.readAsArrayBuffer(file);
@@ -2417,51 +2418,12 @@ async function loadManifest() {
 }
 
 async function importMidiFromUrl(path) {
-  const r = await fetch(path);
-  if (!r.ok) throw new Error('Failed to fetch ' + path);
-  const buf = await r.arrayBuffer();
-  // Re-use importMidiFile logic by wrapping ArrayBuffer as a fake File read
   try {
+    const r = await fetch(path);
+    if (!r.ok) throw new Error('Failed to fetch ' + path);
+    const buf = await r.arrayBuffer();
     const parsed = parseMidi(buf);
-    const incomingTracks = parsed.sections['A'].tracks;
-    const sec = project.sections[activeSectionId];
-    const DRUM_INSTRUMENTS = new Set(['kick','snare','hat']);
-    const isDrum = t => DRUM_INSTRUMENTS.has(t.instrument);
-    const incomingValues = Object.values(incomingTracks);
-    const incomingIsDrum = incomingValues.length > 0 && incomingValues.every(isDrum);
-    const savedSettings = {};
-    for (const t of Object.values(sec.tracks)) {
-      if (isDrum(t) === incomingIsDrum) {
-        savedSettings[t.label] = { instrument:t.instrument, volume:t.volume,
-          muted:t.muted, soloed:t.soloed, reverbSend:t.reverbSend,
-          color:t.color, effects:{...t.effects} };
-      }
-    }
-    for (const [id, t] of Object.entries(sec.tracks)) {
-      if (isDrum(t) === incomingIsDrum) delete sec.tracks[id];
-    }
-    const restoreSettings = track => {
-      const s = savedSettings[track.label];
-      if (!s) return track;
-      return { ...track, instrument:s.instrument, volume:s.volume,
-        muted:s.muted, soloed:s.soloed, reverbSend:s.reverbSend,
-        color:s.color, effects:{...s.effects} };
-    };
-    let added = 0;
-    if (!incomingIsDrum) {
-      const roles = expandChordRoles(incomingTracks);
-      if (roles) { for (const track of roles) { sec.tracks[track.id] = restoreSettings(track); added++; } }
-    } else {
-      for (const track of incomingValues) { sec.tracks[track.id] = restoreSettings(track); added++; }
-    }
-    let maxBeat = sec.lengthBars * 4;
-    for (const t of Object.values(sec.tracks))
-      for (const n of t.notes) maxBeat = Math.max(maxBeat, n.beatStart + n.duration);
-    sec.lengthBars = Math.ceil(maxBeat / 4);
-    if (audioCtx) rebuildEngines();
-    renderTrackHeaders(); renderSectionUI();
-    PR.gridDirty=true; PR.dirty=true; schedRedraw(); saveProject();
-    setStatus(`Added ${added} track${added!==1?'s':''} to Section ${activeSectionId} from library`);
+    scheduleImport(prepareImport(parsed.sections['A'].tracks, activeSectionId), activeSectionId);
   } catch(err) { setStatus('Library import error: '+err.message, true); }
 }
 
