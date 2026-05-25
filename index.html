@@ -2409,7 +2409,10 @@ async function loadManifest() {
   if (manifestCache) return manifestCache;
   const r = await fetch('midi-manifest.json');
   if (!r.ok) throw new Error('Could not load midi-manifest.json');
-  manifestCache = await r.json();
+  manifestCache = (await r.json()).map(e => ({
+    ...e,
+    moods: Array.isArray(e.moods) ? e.moods : (e.moods ? [e.moods] : [])
+  }));
   return manifestCache;
 }
 
