@@ -30,6 +30,11 @@ html,body{height:100%;overflow:hidden;background:#111;color:#ccc;font:13px/1.4 '
 #master-strip label{font-size:10px;color:#666;white-space:nowrap}
 #master-strip input[type=range]{width:72px;height:3px;accent-color:#5566cc;cursor:pointer}
 #master-strip .mc-val{font-size:10px;color:#888;min-width:28px;text-align:right}
+#fx-state-wrap{display:flex;align-items:center;gap:5px;flex-wrap:wrap}
+#fx-state-buttons{display:flex;align-items:center;gap:4px;flex-wrap:wrap}
+.fx-state-btn{padding:2px 7px;font-size:11px;border-color:#4a3f6a;background:#25203a;color:#cfc8ff}
+.fx-state-btn:hover{background:#30284a}
+.fx-state-btn.morphing{background:#4a3a7a;border-color:#8877cc;color:#fff}
 
 /* Section strip */
 #section-strip{
@@ -154,7 +159,7 @@ button.danger:hover{background:#4a1a1a;border-color:#aa3333}
 }
 .track-fx.open{display:flex}
 .fx-row{display:flex;align-items:center;gap:5px;font-size:10px;color:#888}
-.fx-row label{width:54px;flex-shrink:0}
+.fx-row label{width:66px;flex-shrink:0}
 .fx-slider{flex:1;height:3px;accent-color:#4455bb;cursor:pointer}
 .fx-row select{flex:1;min-width:0;font-size:10px;padding:1px 4px}
 
@@ -289,6 +294,14 @@ input[type=range]{cursor:pointer}
       <label>HISS</label>
       <input type="range" id="mc-hiss" min="0" max="0.025" step="0.001" value="0.004">
       <span class="mc-val" id="mc-hiss-val">low</span>
+    </div>
+    <div class="sep"></div>
+    <div class="mc-group" id="fx-state-wrap">
+      <button id="btn-save-fx-state" title="Save the current master and per-track settings as a new recallable FX state.">+ Save State</button>
+      <button id="btn-download-fx-states" title="Download all saved FX states as a JSON preset bank.">⬇ FX Set</button>
+      <button id="btn-upload-fx-states" title="Upload a JSON FX preset bank. This replaces the current FX state buttons.">⬆ FX Set</button>
+      <input type="file" id="fx-states-file-input" accept=".json,application/json" style="display:none">
+      <div id="fx-state-buttons"></div>
     </div>
   </div>
 
@@ -431,6 +444,8 @@ const DEFAULT_MASTER_FX = () => ({
 let project = null;           // the active project object
 let activeSectionId = 'A';    // which section is shown in piano roll
 let selectedTrackId = null;   // track that pencil/keyboard-preview target
+let fxSnapshots = [];         // saved FX-state buttons/preset bank
+let fxMorphSerial = 0;        // cancels in-progress FX state morphs
 
 // Audio
 let audioCtx      = null;
@@ -637,7 +652,7 @@ function performUndo() {
 
 // ── PERSISTENCE ────────────────────────────────────────────────────
 function saveProject() {
-  try { localStorage.setItem('daw-v2', JSON.stringify({ project, activeSectionId, selectedTrackId })); }
+  try { localStorage.setItem('daw-v2', JSON.stringify({ project, activeSectionId, selectedTrackId, fxSnapshots })); }
   catch(e) {}
 }
 
@@ -665,6 +680,7 @@ function loadSaved() {
     normalizeProjectData();
     activeSectionId = data.activeSectionId || project.sectionOrder[0];
     selectedTrackId = data.selectedTrackId || null;
+    fxSnapshots = Array.isArray(data.fxSnapshots) ? data.fxSnapshots : [];
     ensureSelectedTrack();
     return true;
   } catch(e) { return false; }
@@ -1667,12 +1683,12 @@ function renderTrackHeaders() {
         <input type="range" class="vol-slider" data-action="vol" min="0" max="1" step="0.01" value="${track.volume}" title="Volume">
       </div>
       <div class="track-row3">
-        <span style="font-size:10px;color:#666">Rev:</span>
-        <input type="range" class="rev-slider" data-action="rev" min="0" max="1" step="0.01" value="${track.reverbSend}" title="Reverb send">
-        <span style="font-size:10px;color:#666">Pan:</span>
-        <input type="range" class="pan-slider" data-action="pan" min="-1" max="1" step="0.01" value="${track.effects.pan ?? 0}" title="Pan">
-        <button class="fx-toggle" data-action="fx" title="Show effects">FX</button>
-        <button class="fx-toggle" data-action="eq" title="Show EQ">EQ</button>
+        <span style="font-size:10px;color:#666" title="Reverb send: how much of this track is sent into the shared room/space effect.">Rev:</span>
+        <input type="range" class="rev-slider" data-action="rev" min="0" max="1" step="0.01" value="${track.reverbSend}" title="Reverb send: higher values make the track sound farther away or more spacious.">
+        <span style="font-size:10px;color:#666" title="Pan: places this track left or right in the stereo field.">Pan:</span>
+        <input type="range" class="pan-slider" data-action="pan" min="-1" max="1" step="0.01" value="${track.effects.pan ?? 0}" title="Pan: -1 is left, 0 is center, +1 is right.">
+        <button class="fx-toggle" data-action="fx" title="FX: delay, filter, saturation, and LFO sound-shaping controls.">FX</button>
+        <button class="fx-toggle" data-action="eq" title="EQ: tone controls for cutting or boosting bass, mids, and highs.">EQ</button>
       </div>`;
 
     // FX panel
@@ -1685,27 +1701,27 @@ function renderTrackHeaders() {
     const fxPanel = document.createElement('div');
     fxPanel.className = 'track-fx';
     fxPanel.innerHTML = `
-      <div class="fx-row"><label>Dly sync</label><select class="fx-select" data-fx="delaySync">${delaySyncs.map(([v,l]) => `<option value="${v}" ${v===(fx.delaySync||'free')?'selected':''}>${l}</option>`).join('')}</select></div>
-      <div class="fx-row"><label>Dly mix</label><input type="range" class="fx-slider" data-fx="delayMix" min="0" max="1" step="0.01" value="${fx.delayMix}"></div>
-      <div class="fx-row"><label>Dly time</label><input type="range" class="fx-slider" data-fx="delayTime" min="0.05" max="1" step="0.01" value="${fx.delayTime}"></div>
-      <div class="fx-row"><label>Dly fdbk</label><input type="range" class="fx-slider" data-fx="delayFeedback" min="0" max="0.9" step="0.01" value="${fx.delayFeedback}"></div>
-      <div class="fx-row"><label>Filt type</label><select class="fx-select" data-fx="filterType">${filterTypes.map(t => `<option value="${t}" ${t===(fx.filterType||'bandpass')?'selected':''}>${t}</option>`).join('')}</select></div>
-      <div class="fx-row"><label>Filt freq</label><input type="range" class="fx-slider" data-fx="filterCutoff" min="100" max="20000" step="100" value="${fx.filterCutoff}"></div>
-      <div class="fx-row"><label>Filt Q</label><input type="range" class="fx-slider" data-fx="filterRes" min="0.1" max="12" step="0.1" value="${fx.filterRes}"></div>
-      <div class="fx-row"><label>Sat drive</label><input type="range" class="fx-slider" data-fx="distDrive" min="0" max="1" step="0.01" value="${fx.distDrive}"></div>
-      <div class="fx-row"><label>Sat mix</label><input type="range" class="fx-slider" data-fx="distMix" min="0" max="1" step="0.01" value="${fx.distMix}"></div>
-      <div class="fx-row"><label>LFO depth</label><input type="range" class="fx-slider" data-fx="lfoDepth" min="0" max="1" step="0.01" value="${fx.lfoDepth}"></div>
-      <div class="fx-row"><label>LFO rate</label><input type="range" class="fx-slider" data-fx="lfoRate" min="0.1" max="20" step="0.1" value="${fx.lfoRate}"></div>`;
+      <div class="fx-row"><label title="Delay sync: locks the echo timing to the song tempo. Free uses the Delay Time slider instead.">Dly sync</label><select class="fx-select" data-fx="delaySync" title="Delay sync: tempo-locked echo timing, such as 1/8 note or 1/4 note.">${delaySyncs.map(([v,l]) => `<option value="${v}" ${v===(fx.delaySync||'free')?'selected':''}>${l}</option>`).join('')}</select></div>
+      <div class="fx-row"><label title="Delay mix: how much echo signal is blended into the track.">Dly mix</label><input type="range" class="fx-slider" data-fx="delayMix" min="0" max="1" step="0.01" value="${fx.delayMix}" title="Delay mix: 0 is dry/no echo, 1 is maximum echo send."></div>
+      <div class="fx-row"><label title="Delay time: manual echo spacing in seconds, used when Delay Sync is Free.">Dly time</label><input type="range" class="fx-slider" data-fx="delayTime" min="0.05" max="1" step="0.01" value="${fx.delayTime}" title="Delay time: shorter is a quick slapback echo; longer is a slower repeat."></div>
+      <div class="fx-row"><label title="Delay feedback: how much echo feeds back into itself, creating more repeats.">Dly fdbk</label><input type="range" class="fx-slider" data-fx="delayFeedback" min="0" max="0.9" step="0.01" value="${fx.delayFeedback}" title="Delay feedback: higher values make echoes repeat longer. Very high values can get intense."></div>
+      <div class="fx-row"><label title="Filter type: chooses which frequencies the filter keeps or removes.">Filt type</label><select class="fx-select" data-fx="filterType" title="Filter type: lowpass warms/muffles, highpass thins, bandpass narrows, notch cuts a band.">${filterTypes.map(t => `<option value="${t}" ${t===(fx.filterType||'bandpass')?'selected':''}>${t}</option>`).join('')}</select></div>
+      <div class="fx-row"><label title="Filter cutoff frequency: the main frequency point where the filter starts shaping the sound.">Filt freq</label><input type="range" class="fx-slider" data-fx="filterCutoff" min="100" max="20000" step="100" value="${fx.filterCutoff}" title="Filter frequency/cutoff: lower values sound darker; higher values sound brighter or more open."></div>
+      <div class="fx-row"><label title="Filter Q/resonance: emphasizes the cutoff area, making the filter sharper or more whistly.">Filt Q</label><input type="range" class="fx-slider" data-fx="filterRes" min="0.1" max="12" step="0.1" value="${fx.filterRes}" title="Filter Q/resonance: low is smooth, high is sharp and resonant."></div>
+      <div class="fx-row"><label title="Saturation drive: pushes the signal into soft distortion/tape warmth.">Sat drive</label><input type="range" class="fx-slider" data-fx="distDrive" min="0" max="1" step="0.01" value="${fx.distDrive}" title="Saturation drive: higher values add more grit, warmth, and harmonic distortion."></div>
+      <div class="fx-row"><label title="Saturation mix: blends the saturated signal with the clean signal.">Sat mix</label><input type="range" class="fx-slider" data-fx="distMix" min="0" max="1" step="0.01" value="${fx.distMix}" title="Saturation mix: 0 is clean, 1 is fully saturated."></div>
+      <div class="fx-row"><label title="LFO depth: how strongly the low-frequency oscillator moves the filter cutoff.">LFO depth</label><input type="range" class="fx-slider" data-fx="lfoDepth" min="0" max="1" step="0.01" value="${fx.lfoDepth}" title="LFO depth: higher values create more filter movement/wobble."></div>
+      <div class="fx-row"><label title="LFO rate: how fast the low-frequency oscillator moves.">LFO rate</label><input type="range" class="fx-slider" data-fx="lfoRate" min="0.1" max="20" step="0.1" value="${fx.lfoRate}" title="LFO rate: lower is slow movement, higher is faster wobble/tremble."></div>`;
 
     const eqPanel = document.createElement('div');
     eqPanel.className = 'track-fx track-eq';
     eqPanel.innerHTML = `
-      <div class="fx-row"><label>HPF</label><input type="range" class="fx-slider" data-fx="eqHPF" min="20" max="800" step="10" value="${fx.eqHPF}"></div>
-      <div class="fx-row"><label>Low</label><input type="range" class="fx-slider" data-fx="eqLowGain" min="-12" max="12" step="0.5" value="${fx.eqLowGain}"></div>
-      <div class="fx-row"><label>Mid freq</label><input type="range" class="fx-slider" data-fx="eqMidFreq" min="150" max="5000" step="50" value="${fx.eqMidFreq}"></div>
-      <div class="fx-row"><label>Mid</label><input type="range" class="fx-slider" data-fx="eqMidGain" min="-12" max="12" step="0.5" value="${fx.eqMidGain}"></div>
-      <div class="fx-row"><label>Mid Q</label><input type="range" class="fx-slider" data-fx="eqMidQ" min="0.2" max="8" step="0.1" value="${fx.eqMidQ}"></div>
-      <div class="fx-row"><label>High</label><input type="range" class="fx-slider" data-fx="eqHighGain" min="-12" max="12" step="0.5" value="${fx.eqHighGain}"></div>`;
+      <div class="fx-row"><label title="High-pass filter: removes low rumble below the selected frequency.">HPF</label><input type="range" class="fx-slider" data-fx="eqHPF" min="20" max="800" step="10" value="${fx.eqHPF}" title="HPF: raise this to cut low bass/rumble from the track."></div>
+      <div class="fx-row"><label title="Low shelf gain: boosts or cuts the bass region.">Low shelf</label><input type="range" class="fx-slider" data-fx="eqLowGain" min="-12" max="12" step="0.5" value="${fx.eqLowGain}" title="Low shelf: negative values reduce bass; positive values boost bass."></div>
+      <div class="fx-row"><label title="Mid frequency: selects the center frequency affected by Mid gain.">Mid freq</label><input type="range" class="fx-slider" data-fx="eqMidFreq" min="150" max="5000" step="50" value="${fx.eqMidFreq}" title="Mid frequency: chooses which part of the middle range the Mid gain controls."></div>
+      <div class="fx-row"><label title="Mid gain: boosts or cuts the selected middle frequency area.">Mid gain</label><input type="range" class="fx-slider" data-fx="eqMidGain" min="-12" max="12" step="0.5" value="${fx.eqMidGain}" title="Mid gain: negative values scoop/cut mids; positive values bring mids forward."></div>
+      <div class="fx-row"><label title="Mid Q: controls how narrow or wide the Mid gain adjustment is.">Mid Q</label><input type="range" class="fx-slider" data-fx="eqMidQ" min="0.2" max="8" step="0.1" value="${fx.eqMidQ}" title="Mid Q: low is broad/smooth; high is narrow/surgical."></div>
+      <div class="fx-row"><label title="High shelf gain: boosts or cuts the treble/brightness region.">High shelf</label><input type="range" class="fx-slider" data-fx="eqHighGain" min="-12" max="12" step="0.5" value="${fx.eqHighGain}" title="High shelf: negative values darken; positive values add brightness/sparkle."></div>`;
 
     card.appendChild(fxPanel);
     card.appendChild(eqPanel);
@@ -2480,6 +2496,8 @@ function loadDemo() {
   project = makeDemoProject();
   activeSectionId = 'A';
   selectedTrackId = null;
+  fxSnapshots = [];
+  renderFxSnapshotUI();
   ensureSelectedTrack();
   if (audioCtx) rebuildEngines();
   renderTrackHeaders(); renderSectionUI();
@@ -2540,6 +2558,244 @@ function syncMasterStrip() {
 }
 
 
+function applyMasterFxToAudio(timeConstant=0.05) {
+  if (!audioCtx || !project?.masterFx) return;
+  const fx = project.masterFx;
+  const now = audioCtx.currentTime;
+  if (masterBus) masterBus.gain.setTargetAtTime(fx.masterVolume, now, timeConstant);
+  if (bassBoost) {
+    bassBoost.frequency.setTargetAtTime(fx.bassFreq ?? 120, now, timeConstant);
+    bassBoost.gain.setTargetAtTime(fx.bassGain ?? 0, now, timeConstant);
+  }
+  if (compressor) {
+    compressor.threshold.setTargetAtTime(fx.compThreshold ?? -18, now, timeConstant);
+    compressor.ratio.setTargetAtTime(fx.compRatio ?? 6, now, timeConstant);
+  }
+  if (hissGainNode && isPlaying) {
+    hissGainNode.gain.setTargetAtTime(fx.hissLevel ?? 0, now, Math.max(timeConstant, 0.25));
+  }
+}
+
+function captureTrackFxSettings(track) {
+  return {
+    id: track.id,
+    label: track.label,
+    instrument: track.instrument,
+    color: track.color,
+    volume: track.volume,
+    muted: track.muted,
+    soloed: track.soloed,
+    reverbSend: track.reverbSend,
+    effects: cloneData({ ...DEFAULT_FX(), ...(track.effects || {}) })
+  };
+}
+
+function captureFxSnapshot(label) {
+  const sections = {};
+  for (const [secId, sec] of Object.entries(project.sections || {})) {
+    sections[secId] = { label: sec.label, tracks: {} };
+    for (const [trackId, track] of Object.entries(sec.tracks || {})) {
+      sections[secId].tracks[trackId] = captureTrackFxSettings(track);
+    }
+  }
+  return {
+    version: 1,
+    id: uid(),
+    label,
+    createdAt: new Date().toISOString(),
+    tempo: project.tempo,
+    masterFx: cloneData({ ...DEFAULT_MASTER_FX(), ...(project.masterFx || {}) }),
+    sections
+  };
+}
+
+function renderFxSnapshotUI() {
+  const wrap = document.getElementById('fx-state-buttons');
+  if (!wrap) return;
+  wrap.innerHTML = '';
+  fxSnapshots.forEach((snap, i) => {
+    if (!snap.label) snap.label = `FX ${i+1}`;
+    const btn = document.createElement('button');
+    btn.className = 'fx-state-btn';
+    btn.textContent = snap.label;
+    btn.title = `${snap.label}: crossfade to this saved master/per-track FX state.`;
+    btn.addEventListener('click', () => recallFxSnapshot(i));
+    wrap.appendChild(btn);
+  });
+}
+
+function saveFxStateButton() {
+  const label = `FX ${fxSnapshots.length + 1}`;
+  fxSnapshots.push(captureFxSnapshot(label));
+  renderFxSnapshotUI();
+  saveProject();
+  setStatus(`${label} saved — master and per-track settings captured`);
+}
+
+function normalizeFxSnapshot(snap, i=0) {
+  const out = cloneData(snap || {});
+  out.version = out.version || 1;
+  out.id = out.id || uid();
+  out.label = out.label || `FX ${i+1}`;
+  out.masterFx = { ...DEFAULT_MASTER_FX(), ...(out.masterFx || {}) };
+  out.sections = out.sections || {};
+  for (const sec of Object.values(out.sections)) {
+    sec.tracks = sec.tracks || {};
+    for (const tr of Object.values(sec.tracks)) {
+      tr.effects = { ...DEFAULT_FX(), ...(tr.effects || {}) };
+    }
+  }
+  return out;
+}
+
+function downloadFxStates() {
+  if (!fxSnapshots.length) {
+    setStatus('No FX states saved yet — click + Save State first', true);
+    return;
+  }
+  const payload = {
+    type: 'daw-fx-state-bank',
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    projectTitle: project.title || 'Untitled',
+    snapshots: fxSnapshots.map(normalizeFxSnapshot)
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type:'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = (project.title || 'daw') + '-fx-states.json';
+  a.click();
+  URL.revokeObjectURL(a.href);
+  setStatus('FX state bank downloaded');
+}
+
+function uploadFxStatesFile(file) {
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const data = JSON.parse(e.target.result);
+      const snaps = Array.isArray(data) ? data : data.snapshots;
+      if (!Array.isArray(snaps)) throw new Error('No snapshots array found');
+      if (fxSnapshots.length && !confirm('Replace the current FX state buttons with the uploaded set?')) return;
+      fxSnapshots = snaps.map((s, i) => normalizeFxSnapshot(s, i));
+      renderFxSnapshotUI();
+      saveProject();
+      setStatus(`Loaded ${fxSnapshots.length} FX state${fxSnapshots.length!==1?'s':''}`);
+    } catch(err) {
+      setStatus('FX state upload error: ' + err.message, true);
+    }
+  };
+  reader.readAsText(file);
+}
+
+function findTrackForSnapshot(secId, trackId, savedTrack) {
+  const sec = project.sections[secId];
+  if (!sec) return null;
+  if (sec.tracks[trackId]) return sec.tracks[trackId];
+  // Fallback helps if a bank is loaded after track IDs changed, while still keeping tracks distinct.
+  return Object.values(sec.tracks).find(t => t.label === savedTrack.label && t.instrument === savedTrack.instrument)
+      || Object.values(sec.tracks).find(t => t.label === savedTrack.label)
+      || null;
+}
+
+function lerp(a, b, t) { return a + (b - a) * t; }
+function num(v, fallback=0) { return Number.isFinite(+v) ? +v : fallback; }
+
+function recallFxSnapshot(index, duration=1.5) {
+  const snap = normalizeFxSnapshot(fxSnapshots[index], index);
+  if (!snap) return;
+  pushUndo();
+  fxMorphSerial++;
+  const serial = fxMorphSerial;
+  document.querySelectorAll('.fx-state-btn').forEach((b, i) => b.classList.toggle('morphing', i === index));
+
+  const startMaster = cloneData({ ...DEFAULT_MASTER_FX(), ...(project.masterFx || {}) });
+  const targetMaster = cloneData({ ...DEFAULT_MASTER_FX(), ...(snap.masterFx || {}) });
+  const trackPairs = [];
+
+  for (const [secId, secSnap] of Object.entries(snap.sections || {})) {
+    for (const [trackId, savedTrackRaw] of Object.entries(secSnap.tracks || {})) {
+      const savedTrack = normalizeFxSnapshot({ sections:{ tmp:{ tracks:{ tmp:savedTrackRaw } } } }).sections.tmp.tracks.tmp;
+      const track = findTrackForSnapshot(secId, trackId, savedTrack);
+      if (!track) continue;
+      track.effects = { ...DEFAULT_FX(), ...(track.effects || {}) };
+      trackPairs.push({
+        secId,
+        track,
+        start: captureTrackFxSettings(track),
+        target: savedTrack
+      });
+      // String-valued FX need to switch discretely. Do it at the start so numeric params morph toward the right mode.
+      track.effects.filterType = savedTrack.effects.filterType || track.effects.filterType;
+      track.effects.delaySync = savedTrack.effects.delaySync || track.effects.delaySync;
+    }
+  }
+
+  const numericTrackKeys = ['volume','reverbSend'];
+  const numericFxKeys = Object.keys(DEFAULT_FX()).filter(k => typeof DEFAULT_FX()[k] === 'number');
+  const numericMasterKeys = Object.keys(DEFAULT_MASTER_FX()).filter(k => typeof DEFAULT_MASTER_FX()[k] === 'number');
+  const t0 = performance.now();
+  setStatus(`Crossfading to ${snap.label}…`);
+
+  function step(now) {
+    if (serial !== fxMorphSerial) return;
+    const raw = duration <= 0 ? 1 : Math.min(1, (now - t0) / (duration * 1000));
+    const p = raw * raw * (3 - 2 * raw); // smoothstep
+
+    for (const k of numericMasterKeys) {
+      project.masterFx[k] = lerp(num(startMaster[k], DEFAULT_MASTER_FX()[k]), num(targetMaster[k], DEFAULT_MASTER_FX()[k]), p);
+    }
+    applyMasterFxToAudio(0.08);
+
+    for (const pair of trackPairs) {
+      const { track, start, target } = pair;
+      for (const k of numericTrackKeys) {
+        track[k] = lerp(num(start[k], 0), num(target[k], start[k]), p);
+      }
+      track.effects = track.effects || {};
+      for (const k of numericFxKeys) {
+        const fallback = DEFAULT_FX()[k];
+        track.effects[k] = lerp(num(start.effects?.[k], fallback), num(target.effects?.[k], fallback), p);
+      }
+    }
+
+    Object.values(activeTracks()).forEach(t => trackEngines[t.id]?.apply(t));
+    if (raw < 1) {
+      requestAnimationFrame(step);
+    } else {
+      finishFxSnapshotRecall(serial, snap, trackPairs, targetMaster);
+    }
+  }
+  requestAnimationFrame(step);
+}
+
+function finishFxSnapshotRecall(serial, snap, trackPairs, targetMaster) {
+  if (serial !== fxMorphSerial) return;
+  project.masterFx = { ...DEFAULT_MASTER_FX(), ...targetMaster };
+  project.tempo = clamp(+snap.tempo || project.tempo, 20, 400);
+  document.getElementById('bpm-input').value = project.tempo;
+
+  for (const { track, target } of trackPairs) {
+    track.instrument = target.instrument || track.instrument;
+    track.color = target.color || track.color;
+    track.volume = num(target.volume, track.volume);
+    track.muted = !!target.muted;
+    track.soloed = !!target.soloed;
+    track.reverbSend = num(target.reverbSend, track.reverbSend);
+    track.effects = { ...DEFAULT_FX(), ...(target.effects || {}) };
+  }
+
+  applyMasterFxToAudio(0.05);
+  Object.values(activeTracks()).forEach(t => trackEngines[t.id]?.apply(t));
+  syncMasterStrip();
+  renderTrackHeaders();
+  renderFxSnapshotUI();
+  PR.dirty = true; schedRedraw();
+  saveProject();
+  setStatus(`${snap.label} loaded`);
+}
+
+
 document.getElementById('mc-vol').addEventListener('input', async e => {
   const v = +e.target.value;
   document.getElementById('mc-vol-val').textContent = v.toFixed(2);
@@ -2572,6 +2828,15 @@ document.getElementById('mc-hiss').addEventListener('input', async e => {
   // Only update live gain if currently playing (otherwise it stays silent until next play)
   if (hissGainNode && isPlaying) hissGainNode.gain.setTargetAtTime(v, audioCtx.currentTime, 0.3);
   saveProject();
+});
+
+document.getElementById('btn-save-fx-state').addEventListener('click', saveFxStateButton);
+document.getElementById('btn-download-fx-states').addEventListener('click', downloadFxStates);
+document.getElementById('btn-upload-fx-states').addEventListener('click', () =>
+  document.getElementById('fx-states-file-input').click());
+document.getElementById('fx-states-file-input').addEventListener('change', e => {
+  if (e.target.files[0]) uploadFxStatesFile(e.target.files[0]);
+  e.target.value = '';
 });
 
 // ── MIDI LIBRARY BROWSER ──────────────────────────────────────────
@@ -2748,6 +3013,8 @@ document.getElementById('btn-reset').addEventListener('click', () => {
     project = makeProject();
     activeSectionId = 'A';
     selectedTrackId = null;
+    fxSnapshots = [];
+    renderFxSnapshotUI();
     ensureSelectedTrack();
     if (audioCtx) rebuildEngines();
     renderTrackHeaders();
@@ -2774,6 +3041,7 @@ function init() {
 
   renderTrackHeaders();
   renderSectionUI();
+  renderFxSnapshotUI();
 
   // Initial piano roll scroll — center on MIDI ~60-72 range
   window.addEventListener('resize', () => { PR.gridDirty=true; PR.dirty=true; schedRedraw(); });
@@ -2787,5 +3055,6 @@ function init() {
 
 init();
 </script>
-<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a02de3434fd15879',t:'MTc3OTk3Nzg5Nw=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
+<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a02e06af882d5a8e',t:'MTc3OTk3OTM0OA=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script><script defer src="https://static.cloudflareinsights.com/beacon.min.js/v833ccba57c9e4d2798f2e76cebdd09a11778172276447" integrity="sha512-57MDmcccJXYtNnH+ZiBwzC4jb2rvgVCEokYN+L/nLlmO8rfYT/gIpW2A569iJ/3b+0UEasghjuZH/ma3wIs/EQ==" data-cf-beacon='{"version":"2024.11.0","token":"1954b47c125f43f8b4338b3c4f804e4f","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
+</body>
 </html>
