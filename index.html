@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -143,6 +144,7 @@ button.danger:hover{background:#4a1a1a;border-color:#aa3333}
 }
 .track-row3{display:flex;align-items:center;gap:4px}
 .rev-slider{width:50px;height:3px;accent-color:#336655;cursor:pointer}
+.pan-slider{width:46px;height:3px;accent-color:#aa6655;cursor:pointer}
 .fx-toggle{font-size:10px;padding:2px 5px;border-radius:3px}
 
 /* Per-track effects panel */
@@ -154,6 +156,7 @@ button.danger:hover{background:#4a1a1a;border-color:#aa3333}
 .fx-row{display:flex;align-items:center;gap:5px;font-size:10px;color:#888}
 .fx-row label{width:54px;flex-shrink:0}
 .fx-slider{flex:1;height:3px;accent-color:#4455bb;cursor:pointer}
+.fx-row select{flex:1;min-width:0;font-size:10px;padding:1px 4px}
 
 /* ── FORM INPUTS ─────────────────────────────────────────────────── */
 select{
@@ -399,7 +402,9 @@ const BLACK_NOTES = new Set([1,3,6,8,10]);
 // ── DEFAULT STRUCTURES ─────────────────────────────────────────────
 const DEFAULT_FX = () => ({
   reverbMix:0.2, reverbDecay:2.0,
-  delayMix:0.0,  delayTime:0.375, delayFeedback:0.35,
+  delayMix:0.0,  delayTime:0.375, delayFeedback:0.35, delaySync:'free',
+  pan:0,
+  eqHPF:20, eqLowGain:0, eqMidFreq:1000, eqMidGain:0, eqMidQ:1, eqHighGain:0,
   filterType:'bandpass', filterCutoff:1500, filterRes:0.5,
   lfoDepth:0.0,  lfoRate:1.0,
   wowDepth:0.003,                     // wow/flutter: ~0.3% pitch deviation
@@ -425,6 +430,7 @@ const DEFAULT_MASTER_FX = () => ({
 // ── STATE ──────────────────────────────────────────────────────────
 let project = null;           // the active project object
 let activeSectionId = 'A';    // which section is shown in piano roll
+let selectedTrackId = null;   // track that pencil/keyboard-preview target
 
 // Audio
 let audioCtx      = null;
@@ -479,6 +485,17 @@ function uid() { return 'n' + (++_idCounter) + '_' + Math.random().toString(36).
 function midiToHz(m)  { return 440 * Math.pow(2, (m - 69) / 12); }
 function beatToSec(b) { return b * 60 / project.tempo; }
 function secToBeat(s) { return s * project.tempo / 60; }
+
+function delaySyncToBeats(sync) {
+  return ({
+    '1/16':0.25, '1/8':0.5, '1/8D':0.75,
+    '1/4':1, '1/4D':1.5, '1/2':2, '1/1':4
+  })[sync] || null;
+}
+function trackDelayTime(track) {
+  const beats = delaySyncToBeats(track.effects?.delaySync);
+  return clamp(beats ? beatToSec(beats) : (track.effects?.delayTime ?? 0.375), 0.01, 2.0);
+}
 
 function snapBeat(b, q) {
   if (!q) return b;
@@ -571,9 +588,34 @@ function activeTracks() {
   return project.sections[activeSectionId]?.tracks || {};
 }
 
+// The selected track is the edit target for drawing new notes.
+function ensureSelectedTrack() {
+  const tracks = activeTracks();
+  if (selectedTrackId && tracks[selectedTrackId]) return tracks[selectedTrackId];
+  const first = Object.values(tracks)[0] || null;
+  selectedTrackId = first ? first.id : null;
+  return first;
+}
+
+function updateSelectedTrackHighlight() {
+  document.querySelectorAll('.track-card').forEach(card => {
+    card.classList.toggle('selected', card.dataset.trackId === selectedTrackId);
+  });
+}
+
+function selectTrack(id, { render=false, save=true } = {}) {
+  const tracks = activeTracks();
+  if (!tracks[id]) return null;
+  selectedTrackId = id;
+  if (render) renderTrackHeaders();
+  else updateSelectedTrackHighlight();
+  if (save) saveProject();
+  return tracks[id];
+}
+
 // ── UNDO ───────────────────────────────────────────────────────────
 function pushUndo() {
-  undoStack.push(cloneData({ project, activeSectionId }));
+  undoStack.push(cloneData({ project, activeSectionId, selectedTrackId }));
   if (undoStack.length > UNDO_LIMIT) undoStack.shift();
   document.getElementById('btn-undo').disabled = false;
 }
@@ -583,6 +625,8 @@ function performUndo() {
   const snap = undoStack.pop();
   project = snap.project;
   activeSectionId = snap.activeSectionId;
+  selectedTrackId = snap.selectedTrackId || null;
+  ensureSelectedTrack();
   if (!undoStack.length) document.getElementById('btn-undo').disabled = true;
   rebuildEngines();
   renderTrackHeaders();
@@ -593,8 +637,23 @@ function performUndo() {
 
 // ── PERSISTENCE ────────────────────────────────────────────────────
 function saveProject() {
-  try { localStorage.setItem('daw-v2', JSON.stringify({ project, activeSectionId })); }
+  try { localStorage.setItem('daw-v2', JSON.stringify({ project, activeSectionId, selectedTrackId })); }
   catch(e) {}
+}
+
+function normalizeProjectData() {
+  if (!project) return;
+  project.masterFx = { ...DEFAULT_MASTER_FX(), ...(project.masterFx || {}) };
+  for (const sec of Object.values(project.sections || {})) {
+    for (const track of Object.values(sec.tracks || {})) {
+      track.notes = track.notes || [];
+      track.effects = {
+        ...DEFAULT_FX(),
+        ...(INST_FILTER[track.instrument] || {}),
+        ...(track.effects || {})
+      };
+    }
+  }
 }
 
 function loadSaved() {
@@ -603,9 +662,10 @@ function loadSaved() {
     if (!raw) return false;
     const data = JSON.parse(raw);
     project = data.project;
-    // Migrate older saves that pre-date masterFx (fill in any missing keys)
-    project.masterFx = { ...DEFAULT_MASTER_FX(), ...(project.masterFx || {}) };
+    normalizeProjectData();
     activeSectionId = data.activeSectionId || project.sectionOrder[0];
+    selectedTrackId = data.selectedTrackId || null;
+    ensureSelectedTrack();
     return true;
   } catch(e) { return false; }
 }
@@ -726,6 +786,30 @@ class TrackEngine {
     this.trackGain = ctx.createGain();
     this.trackGain.gain.value = track.muted ? 0 : track.volume;
 
+    this.panner = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
+    if (this.panner) this.panner.pan.value = clamp(track.effects.pan ?? 0, -1, 1);
+
+    this.eqHPF = ctx.createBiquadFilter();
+    this.eqHPF.type = 'highpass';
+    this.eqHPF.frequency.value = clamp(track.effects.eqHPF ?? 20, 20, 800);
+    this.eqHPF.Q.value = 0.707;
+
+    this.eqLow = ctx.createBiquadFilter();
+    this.eqLow.type = 'lowshelf';
+    this.eqLow.frequency.value = 160;
+    this.eqLow.gain.value = track.effects.eqLowGain ?? 0;
+
+    this.eqMid = ctx.createBiquadFilter();
+    this.eqMid.type = 'peaking';
+    this.eqMid.frequency.value = clamp(track.effects.eqMidFreq ?? 1000, 150, 5000);
+    this.eqMid.Q.value = clamp(track.effects.eqMidQ ?? 1, 0.2, 8);
+    this.eqMid.gain.value = track.effects.eqMidGain ?? 0;
+
+    this.eqHigh = ctx.createBiquadFilter();
+    this.eqHigh.type = 'highshelf';
+    this.eqHigh.frequency.value = 6000;
+    this.eqHigh.gain.value = track.effects.eqHighGain ?? 0;
+
     this.filter = ctx.createBiquadFilter();
     this.filter.type = track.effects.filterType || 'bandpass';
     this.filter.frequency.value = track.effects.filterCutoff;
@@ -751,11 +835,27 @@ class TrackEngine {
     this.rvSend    = ctx.createGain(); this.rvSend.gain.value = track.reverbSend * track.effects.reverbMix;
     this.dlySend   = ctx.createGain(); this.dlySend.gain.value = track.effects.delayMix;
 
+    // Per-track delay line. The old shared delay made one track's delay-time/feedback
+    // sliders affect every delayed track; each TrackEngine now owns its own delay loop.
+    this.delay = ctx.createDelay(2.0);
+    this.delay.delayTime.value = trackDelayTime(track);
+    this.delayFeedback = ctx.createGain();
+    this.delayFeedback.gain.value = clamp(track.effects.delayFeedback ?? 0.35, 0, 0.95);
+
     // satBus merges dry+wet saturator paths before going to out splits
     this.satBus = ctx.createGain(); this.satBus.gain.value = 1;
 
-    // Wire: trackGain → filter → (dry path + saturated path) → satBus → [dry, rv, dly sends]
-    this.trackGain.connect(this.filter);
+    // Wire: trackGain → pan → corrective EQ → creative filter → saturation → [dry, rv, per-track delay sends]
+    if (this.panner) {
+      this.trackGain.connect(this.panner);
+      this.panner.connect(this.eqHPF);
+    } else {
+      this.trackGain.connect(this.eqHPF);
+    }
+    this.eqHPF.connect(this.eqLow);
+    this.eqLow.connect(this.eqMid);
+    this.eqMid.connect(this.eqHigh);
+    this.eqHigh.connect(this.filter);
     this.filter.connect(this.saturatorDry);
     this.filter.connect(this.saturator);
     this.saturator.connect(this.saturatorWet);
@@ -766,7 +866,10 @@ class TrackEngine {
     this.satBus.connect(this.dlySend);
     this.dryGain.connect(masterBus);
     this.rvSend.connect(sharedReverb);
-    this.dlySend.connect(sharedDelay);
+    this.dlySend.connect(this.delay);
+    this.delay.connect(this.delayFeedback);
+    this.delayFeedback.connect(this.delay);
+    this.delay.connect(delayReturn);
   }
 
   dest() { return this.trackGain; }
@@ -775,6 +878,13 @@ class TrackEngine {
     const anySolo = Object.values(activeTracks()).some(t => t.soloed);
     const vol = track.muted ? 0 : (anySolo && !track.soloed ? 0 : track.volume);
     this.trackGain.gain.setTargetAtTime(vol, audioCtx.currentTime, 0.01);
+    if (this.panner) this.panner.pan.setTargetAtTime(clamp(track.effects.pan ?? 0, -1, 1), audioCtx.currentTime, 0.02);
+    this.eqHPF.frequency.setTargetAtTime(clamp(track.effects.eqHPF ?? 20, 20, 800), audioCtx.currentTime, 0.02);
+    this.eqLow.gain.setTargetAtTime(track.effects.eqLowGain ?? 0, audioCtx.currentTime, 0.02);
+    this.eqMid.frequency.setTargetAtTime(clamp(track.effects.eqMidFreq ?? 1000, 150, 5000), audioCtx.currentTime, 0.02);
+    this.eqMid.Q.setTargetAtTime(clamp(track.effects.eqMidQ ?? 1, 0.2, 8), audioCtx.currentTime, 0.02);
+    this.eqMid.gain.setTargetAtTime(track.effects.eqMidGain ?? 0, audioCtx.currentTime, 0.02);
+    this.eqHigh.gain.setTargetAtTime(track.effects.eqHighGain ?? 0, audioCtx.currentTime, 0.02);
     this.filter.type = track.effects.filterType || 'bandpass';
     this.filter.frequency.setTargetAtTime(track.effects.filterCutoff, audioCtx.currentTime, 0.02);
     this.filter.Q.value = track.effects.filterRes;
@@ -785,6 +895,14 @@ class TrackEngine {
     );
     this.rvSend.gain.setTargetAtTime(track.reverbSend * track.effects.reverbMix, audioCtx.currentTime, 0.02);
     this.dlySend.gain.setTargetAtTime(track.effects.delayMix, audioCtx.currentTime, 0.02);
+    this.delay.delayTime.setTargetAtTime(
+      trackDelayTime(track),
+      audioCtx.currentTime, 0.02
+    );
+    this.delayFeedback.gain.setTargetAtTime(
+      clamp(track.effects.delayFeedback ?? 0.35, 0, 0.95),
+      audioCtx.currentTime, 0.02
+    );
     // Update saturator
     const drive = track.effects.distDrive ?? 0.08;
     const mix   = track.effects.distMix   ?? 0.07;
@@ -797,9 +915,10 @@ class TrackEngine {
     try { this.lfo.stop(); } catch(e) {}
     // Disconnect every node so nothing leaks into the audio graph
     for (const node of [
-      this.trackGain, this.filter, this.saturator,
-      this.saturatorDry, this.saturatorWet, this.satBus,
-      this.dryGain, this.rvSend, this.dlySend, this.lfoGain
+      this.trackGain, this.panner, this.eqHPF, this.eqLow, this.eqMid, this.eqHigh,
+      this.filter, this.saturator, this.saturatorDry, this.saturatorWet, this.satBus,
+      this.dryGain, this.rvSend, this.dlySend, this.delay,
+      this.delayFeedback, this.lfoGain
     ]) { try { node.disconnect(); } catch(e) {} }
   }
 }
@@ -1400,9 +1519,9 @@ noteCanvas.addEventListener('mousedown', async e => {
     // keyboard preview
     const midi = yToMidi(y);
     if (midi >= MIDI_MIN && midi <= MIDI_MAX) {
-      const eng = Object.values(trackEngines)[0];
+      const track = ensureSelectedTrack();
+      const eng = track ? getOrCreateEngine(track) : Object.values(trackEngines)[0];
       const dest = eng ? eng.dest() : masterBus;
-      const track = Object.values(activeTracks())[0];
       if (track) playNote(track.instrument, midiToHz(midi), 0.5, audioCtx.currentTime, dest);
     }
     return;
@@ -1415,6 +1534,7 @@ noteCanvas.addEventListener('mousedown', async e => {
   }
 
   const hit = hitTest(x, y);
+  if (hit) selectTrack(hit.track.id, { render:false });
   if (activeTool === 'eraser' || e.button === 2) {
     if (hit) {
       pushUndo();
@@ -1447,9 +1567,9 @@ noteCanvas.addEventListener('mousedown', async e => {
     const midi = clamp(yToMidi(y), MIDI_MIN, MIDI_MAX);
     const dur  = quantSnap || 0.5;
     const note = makeNote(beat, midi, dur);
-    // Place in first non-muted track, or first track
+    // Place in selected track. If nothing is selected yet, fall back to first non-muted track.
     const tracks = Object.values(activeTracks());
-    const target = tracks.find(t=>!t.muted) || tracks[0];
+    const target = ensureSelectedTrack() || tracks.find(t=>!t.muted) || tracks[0];
     if (target) {
       target.notes.push(note);
       dragState = { type:'draw', noteId:note.id, trackId:target.id, startX:x, origBeat:beat, origMidi:midi };
@@ -1521,12 +1641,13 @@ function zoomOut() { PR.pixelsPerBeat = clamp(PR.pixelsPerBeat/1.2,10,400); docu
 
 // ── TRACK HEADERS UI ───────────────────────────────────────────────
 function renderTrackHeaders() {
+  ensureSelectedTrack();
   const list = document.getElementById('track-list');
   list.innerHTML = '';
   const tracks = Object.values(activeTracks());
   tracks.forEach(track => {
     const card = document.createElement('div');
-    card.className = 'track-card';
+    card.className = 'track-card' + (track.id === selectedTrackId ? ' selected' : '');
     card.dataset.trackId = track.id;
 
     const instOpts = INSTRUMENTS.map(i =>
@@ -1548,22 +1669,49 @@ function renderTrackHeaders() {
       <div class="track-row3">
         <span style="font-size:10px;color:#666">Rev:</span>
         <input type="range" class="rev-slider" data-action="rev" min="0" max="1" step="0.01" value="${track.reverbSend}" title="Reverb send">
+        <span style="font-size:10px;color:#666">Pan:</span>
+        <input type="range" class="pan-slider" data-action="pan" min="-1" max="1" step="0.01" value="${track.effects.pan ?? 0}" title="Pan">
         <button class="fx-toggle" data-action="fx" title="Show effects">FX</button>
+        <button class="fx-toggle" data-action="eq" title="Show EQ">EQ</button>
       </div>`;
 
     // FX panel
     const fx = track.effects;
+    const filterTypes = ['lowpass','highpass','bandpass','notch'];
+    const delaySyncs = [
+      ['free','Free'], ['1/16','1/16'], ['1/8','1/8'], ['1/8D','1/8 dotted'],
+      ['1/4','1/4'], ['1/4D','1/4 dotted'], ['1/2','1/2'], ['1/1','1 bar']
+    ];
     const fxPanel = document.createElement('div');
     fxPanel.className = 'track-fx';
     fxPanel.innerHTML = `
+      <div class="fx-row"><label>Dly sync</label><select class="fx-select" data-fx="delaySync">${delaySyncs.map(([v,l]) => `<option value="${v}" ${v===(fx.delaySync||'free')?'selected':''}>${l}</option>`).join('')}</select></div>
       <div class="fx-row"><label>Dly mix</label><input type="range" class="fx-slider" data-fx="delayMix" min="0" max="1" step="0.01" value="${fx.delayMix}"></div>
       <div class="fx-row"><label>Dly time</label><input type="range" class="fx-slider" data-fx="delayTime" min="0.05" max="1" step="0.01" value="${fx.delayTime}"></div>
       <div class="fx-row"><label>Dly fdbk</label><input type="range" class="fx-slider" data-fx="delayFeedback" min="0" max="0.9" step="0.01" value="${fx.delayFeedback}"></div>
-      <div class="fx-row"><label>Filter</label><input type="range" class="fx-slider" data-fx="filterCutoff" min="100" max="20000" step="100" value="${fx.filterCutoff}"></div>
+      <div class="fx-row"><label>Filt type</label><select class="fx-select" data-fx="filterType">${filterTypes.map(t => `<option value="${t}" ${t===(fx.filterType||'bandpass')?'selected':''}>${t}</option>`).join('')}</select></div>
+      <div class="fx-row"><label>Filt freq</label><input type="range" class="fx-slider" data-fx="filterCutoff" min="100" max="20000" step="100" value="${fx.filterCutoff}"></div>
+      <div class="fx-row"><label>Filt Q</label><input type="range" class="fx-slider" data-fx="filterRes" min="0.1" max="12" step="0.1" value="${fx.filterRes}"></div>
+      <div class="fx-row"><label>Sat drive</label><input type="range" class="fx-slider" data-fx="distDrive" min="0" max="1" step="0.01" value="${fx.distDrive}"></div>
+      <div class="fx-row"><label>Sat mix</label><input type="range" class="fx-slider" data-fx="distMix" min="0" max="1" step="0.01" value="${fx.distMix}"></div>
       <div class="fx-row"><label>LFO depth</label><input type="range" class="fx-slider" data-fx="lfoDepth" min="0" max="1" step="0.01" value="${fx.lfoDepth}"></div>
       <div class="fx-row"><label>LFO rate</label><input type="range" class="fx-slider" data-fx="lfoRate" min="0.1" max="20" step="0.1" value="${fx.lfoRate}"></div>`;
 
+    const eqPanel = document.createElement('div');
+    eqPanel.className = 'track-fx track-eq';
+    eqPanel.innerHTML = `
+      <div class="fx-row"><label>HPF</label><input type="range" class="fx-slider" data-fx="eqHPF" min="20" max="800" step="10" value="${fx.eqHPF}"></div>
+      <div class="fx-row"><label>Low</label><input type="range" class="fx-slider" data-fx="eqLowGain" min="-12" max="12" step="0.5" value="${fx.eqLowGain}"></div>
+      <div class="fx-row"><label>Mid freq</label><input type="range" class="fx-slider" data-fx="eqMidFreq" min="150" max="5000" step="50" value="${fx.eqMidFreq}"></div>
+      <div class="fx-row"><label>Mid</label><input type="range" class="fx-slider" data-fx="eqMidGain" min="-12" max="12" step="0.5" value="${fx.eqMidGain}"></div>
+      <div class="fx-row"><label>Mid Q</label><input type="range" class="fx-slider" data-fx="eqMidQ" min="0.2" max="8" step="0.1" value="${fx.eqMidQ}"></div>
+      <div class="fx-row"><label>High</label><input type="range" class="fx-slider" data-fx="eqHighGain" min="-12" max="12" step="0.5" value="${fx.eqHighGain}"></div>`;
+
     card.appendChild(fxPanel);
+    card.appendChild(eqPanel);
+
+    // Clicking a track header selects the track used by the pencil tool.
+    card.addEventListener('click', () => selectTrack(track.id, { render:false }));
 
     // Events
     card.querySelector('[data-action="mute"]').addEventListener('click', () => {
@@ -1582,6 +1730,8 @@ function renderTrackHeaders() {
       // Remove only from the active section — sections are independent
       delete project.sections[activeSectionId].tracks[track.id];
       trackEngines[track.id]?.destroy(); delete trackEngines[track.id];
+      if (selectedTrackId === track.id) selectedTrackId = null;
+      ensureSelectedTrack();
       renderTrackHeaders(); PR.dirty=true; schedRedraw(); saveProject();
     });
     card.querySelector('[data-action="inst"]').addEventListener('change', e => {
@@ -1595,8 +1745,15 @@ function renderTrackHeaders() {
       track.reverbSend = +e.target.value;
       trackEngines[track.id]?.apply(track); saveProject();
     });
+    card.querySelector('[data-action="pan"]').addEventListener('input', e => {
+      track.effects.pan = +e.target.value;
+      trackEngines[track.id]?.apply(track); saveProject();
+    });
     card.querySelector('[data-action="fx"]').addEventListener('click', () => {
       fxPanel.classList.toggle('open');
+    });
+    card.querySelector('[data-action="eq"]').addEventListener('click', () => {
+      eqPanel.classList.toggle('open');
     });
     card.querySelector('.track-name').addEventListener('change', e => {
       track.label = e.target.value; saveProject();
@@ -1606,9 +1763,15 @@ function renderTrackHeaders() {
       track.color = TRACK_COLORS[(idx+1) % TRACK_COLORS.length];
       renderTrackHeaders(); PR.dirty=true; schedRedraw(); saveProject();
     });
-    fxPanel.querySelectorAll('.fx-slider').forEach(sl => {
+    card.querySelectorAll('.fx-slider').forEach(sl => {
       sl.addEventListener('input', () => {
         track.effects[sl.dataset.fx] = +sl.value;
+        trackEngines[track.id]?.apply(track); saveProject();
+      });
+    });
+    card.querySelectorAll('.fx-select').forEach(sel => {
+      sel.addEventListener('change', () => {
+        track.effects[sel.dataset.fx] = sel.value;
         trackEngines[track.id]?.apply(track); saveProject();
       });
     });
@@ -1626,6 +1789,7 @@ function addTrack() {
   }
   // Make sure active section has same id/settings
   project.sections[activeSectionId].tracks[t.id] = t;
+  selectedTrackId = t.id;
   if (audioCtx) trackEngines[t.id] = new TrackEngine(t);
   renderTrackHeaders(); PR.dirty=true; schedRedraw(); saveProject();
 }
@@ -1678,6 +1842,7 @@ function renderSectionUI() {
 function switchSection(id) {
   if (!project.sections[id]) return;
   activeSectionId = id;
+  ensureSelectedTrack();
   if (audioCtx) rebuildEngines();
   renderTrackHeaders();
   renderSectionUI();
@@ -1709,6 +1874,7 @@ function deleteSection(id) {
   if (activeSectionId === id) {
     activeSectionId = project.sectionOrder[0];
   }
+  ensureSelectedTrack();
 
   if (audioCtx) rebuildEngines();
   renderTrackHeaders();
@@ -2081,6 +2247,8 @@ function applyImport(prepared, targetSectionId) {
   for (const id of prepared.toDelete) delete sec.tracks[id];
   for (const t of prepared.toAdd) sec.tracks[t.id] = t;
   sec.lengthBars = prepared.newLengthBars;
+  if (!sec.tracks[selectedTrackId] && prepared.toAdd.length) selectedTrackId = prepared.toAdd[0].id;
+  ensureSelectedTrack();
   if (audioCtx) rebuildEngines();
   renderTrackHeaders(); renderSectionUI();
   PR.gridDirty=true; PR.dirty=true; schedRedraw(); saveProject();
@@ -2157,28 +2325,30 @@ async function bounceWav() {
 
   // Schedule all sections
   let tOffset = 0;
-  const savedCtx = audioCtx, savedNoise = noiseBuffer, savedBus = masterBus, savedRev = sharedReverb, savedDly = sharedDelay;
-  audioCtx = oCtx; noiseBuffer = oNoise; masterBus = oBus; sharedReverb = oReverb; sharedDelay = oDelay;
+  const savedCtx = audioCtx, savedNoise = noiseBuffer, savedBus = masterBus,
+        savedRev = sharedReverb, savedDly = sharedDelay, savedDelayReturn = delayReturn;
+  audioCtx = oCtx; noiseBuffer = oNoise; masterBus = oBus;
+  sharedReverb = oReverb; sharedDelay = oDelay; delayReturn = oDlRet;
 
   for (const secId of project.sectionOrder) {
     const sec = project.sections[secId];
     if (!sec) continue;
     const secLenSecs = sec.lengthBars * 4 * 60 / bpm;
+    const anySolo = Object.values(sec.tracks).some(t => t.soloed);
     for (const track of Object.values(sec.tracks)) {
-      if (track.muted) continue;
-      const tGain = oCtx.createGain(); tGain.gain.value = track.volume;
-      const tDry  = oCtx.createGain(); tDry.connect(oBus);
-      const tRv   = oCtx.createGain(); tRv.gain.value = track.reverbSend * track.effects.reverbMix; tRv.connect(oReverb);
-      tGain.connect(tDry); tGain.connect(tRv);
+      if (track.muted || (anySolo && !track.soloed)) continue;
+      track.effects = { ...DEFAULT_FX(), ...(track.effects || {}) };
+      const engine = new TrackEngine(track);
       for (const note of track.notes) {
         const t = tOffset + note.beatStart * 60 / bpm;
-        playNote(track.instrument, midiToHz(note.midiNote), note.duration*60/bpm, t, tGain);
+        playNote(track.instrument, midiToHz(note.midiNote), note.duration*60/bpm, t, engine.dest());
       }
     }
     tOffset += secLenSecs;
   }
 
-  audioCtx = savedCtx; noiseBuffer = savedNoise; masterBus = savedBus; sharedReverb = savedReverb; sharedDelay = savedDly;
+  audioCtx = savedCtx; noiseBuffer = savedNoise; masterBus = savedBus;
+  sharedReverb = savedRev; sharedDelay = savedDly; delayReturn = savedDelayReturn;
 
   const rendered = await oCtx.startRendering();
   const blob = audioBufferToWav(rendered);
@@ -2309,6 +2479,8 @@ function loadDemo() {
   pushUndo();
   project = makeDemoProject();
   activeSectionId = 'A';
+  selectedTrackId = null;
+  ensureSelectedTrack();
   if (audioCtx) rebuildEngines();
   renderTrackHeaders(); renderSectionUI();
   PR.scrollBeat = 0;
@@ -2558,6 +2730,7 @@ document.getElementById('btn-stop').addEventListener('click', () => {
 });
 document.getElementById('bpm-input').addEventListener('input', e => {
   project.tempo = clamp(+e.target.value||120, 20, 400);
+  Object.values(activeTracks()).forEach(t => trackEngines[t.id]?.apply(t));
   saveProject();
 });
 document.getElementById('quant-sel').addEventListener('change', e => {
@@ -2574,6 +2747,8 @@ document.getElementById('btn-reset').addEventListener('click', () => {
     localStorage.removeItem('daw-v2');
     project = makeProject();
     activeSectionId = 'A';
+    selectedTrackId = null;
+    ensureSelectedTrack();
     if (audioCtx) rebuildEngines();
     renderTrackHeaders();
     renderSectionUI();
@@ -2590,6 +2765,9 @@ function init() {
   if (!loadSaved()) {
     project = makeProject();
     activeSectionId = 'A';
+    selectedTrackId = null;
+    normalizeProjectData();
+    ensureSelectedTrack();
   }
   document.getElementById('bpm-input').value = project.tempo;
   syncMasterStrip();
@@ -2609,5 +2787,5 @@ function init() {
 
 init();
 </script>
-</body>
+<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a02de3434fd15879',t:'MTc3OTk3Nzg5Nw=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
 </html>
