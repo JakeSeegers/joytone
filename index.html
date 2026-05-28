@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -152,6 +153,8 @@ button.danger:hover{background:#4a1a1a;border-color:#aa3333}
 .fx-toggle{font-size:10px;padding:2px 5px;border-radius:3px}
 .sample-row{font-size:10px;color:#777}
 .sample-load{font-size:10px;padding:2px 6px;border-radius:3px}
+.sample-sustain.on{background:#3d3d6e;border-color:#5555aa;color:#ddf}
+.sample-auto{font-size:10px;padding:2px 6px;border-radius:3px}
 .sample-root{width:42px!important;padding:1px 3px!important;font-size:10px!important}
 .sample-name{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#888}
 
@@ -1011,6 +1014,108 @@ function trackSampleName(track) {
   return track.sample?.name || track.sample?.url?.split('/').pop() || '';
 }
 
+function midiFromNoteName(note, octave) {
+  const pcs = { C:0, 'C#':1, DB:1, D:2, 'D#':3, EB:3, E:4, F:5, 'F#':6, GB:6, G:7, 'G#':8, AB:8, A:9, 'A#':10, BB:10, B:11 };
+  const key = note.toUpperCase().replace('♯','#').replace('♭','B');
+  if (pcs[key] === undefined) return null;
+  return clamp((+octave + 1) * 12 + pcs[key], MIDI_MIN, MIDI_MAX);
+}
+
+function detectMidiFromSampleName(name) {
+  // Finds note names in filenames like piano_C4.mp3, vocal-F#3.wav, bass_Bb1.ogg.
+  const m = (name || '').match(/(?:^|[^A-Ga-g])([A-Ga-g])([#b♯♭]?)(-?\d)(?=$|[^0-9])/);
+  if (!m) return null;
+  return midiFromNoteName(m[1] + (m[2] || ''), m[3]);
+}
+
+function estimateSampleRootMidi(buffer) {
+  // Lightweight monophonic pitch detector. Works best on single-note samples;
+  // chords/drums/noisy MP3s may be unreliable, so we return confidence too.
+  if (!buffer || !buffer.length) return null;
+  const sr = buffer.sampleRate;
+  const chs = buffer.numberOfChannels;
+  const maxLen = Math.min(buffer.length, Math.floor(sr * 1.2));
+  const win = Math.min(32768, maxLen);
+  if (win < 2048) return null;
+
+  // Find a reasonably loud analysis window near the start.
+  let bestStart = 0, bestRms = 0;
+  const step = Math.max(512, Math.floor(win / 8));
+  for (let start = 0; start + win <= maxLen; start += step) {
+    let sum = 0;
+    for (let i=0; i<win; i+=4) {
+      let v = 0;
+      for (let c=0; c<chs; c++) v += buffer.getChannelData(c)[start+i];
+      v /= chs;
+      sum += v*v;
+    }
+    const rms = Math.sqrt(sum / (win/4));
+    if (rms > bestRms) { bestRms = rms; bestStart = start; }
+  }
+  if (bestRms < 0.008) return null;
+
+  const data = new Float32Array(win);
+  for (let i=0; i<win; i++) {
+    let v = 0;
+    for (let c=0; c<chs; c++) v += buffer.getChannelData(c)[bestStart+i];
+    data[i] = v / chs;
+  }
+
+  const minLag = Math.floor(sr / 1000); // ~1000 Hz max
+  const maxLag = Math.floor(sr / 45);   // ~45 Hz min
+  let bestLag = 0, bestCorr = -1;
+  let zeroLag = 0;
+  for (let i=0; i<win; i++) zeroLag += data[i] * data[i];
+  if (zeroLag <= 0) return null;
+
+  for (let lag=minLag; lag<=maxLag && lag<win-1; lag++) {
+    let corr = 0;
+    for (let i=0; i<win-lag; i+=2) corr += data[i] * data[i+lag];
+    corr /= zeroLag;
+    if (corr > bestCorr) { bestCorr = corr; bestLag = lag; }
+  }
+  if (!bestLag || bestCorr < 0.18) return null;
+  const freq = sr / bestLag;
+  const midi = clamp(Math.round(69 + 12 * Math.log2(freq / 440)), MIDI_MIN, MIDI_MAX);
+  return { midi, freq, confidence: bestCorr };
+}
+
+function inferRootFromMidiNotes(track) {
+  const notes = (track.notes || []).filter(n => Number.isFinite(n.midiNote));
+  if (!notes.length) return null;
+  // Weighted median minimizes average pitch-shift distance across the track.
+  const expanded = [];
+  for (const n of notes) {
+    const w = Math.max(1, Math.round((n.duration || 0.25) * 4));
+    for (let i=0; i<w; i++) expanded.push(n.midiNote);
+  }
+  expanded.sort((a,b) => a-b);
+  return expanded[Math.floor(expanded.length / 2)];
+}
+
+function autoShiftSampleTrack(track, rootInput=null) {
+  if (!track) return;
+  const nameMidi = detectMidiFromSampleName(trackSampleName(track));
+  let midi = nameMidi, source = 'filename';
+  if (midi == null && sampleBuffers[track.id]) {
+    const est = estimateSampleRootMidi(sampleBuffers[track.id]);
+    if (est) { midi = est.midi; source = `audio pitch (${est.confidence.toFixed(2)})`; }
+  }
+  if (midi == null) {
+    midi = inferRootFromMidiNotes(track);
+    source = 'MIDI notes fallback';
+  }
+  if (midi == null) {
+    setStatus('AutoShift could not find a sample pitch or MIDI-note fallback', true);
+    return;
+  }
+  track.sample = { ...(track.sample || {}), rootMidi: midi };
+  track.instrument = 'sample';
+  if (rootInput) rootInput.value = midi;
+  saveProject();
+  setStatus(`AutoShift set ${track.label} root MIDI to ${midi} from ${source}`);
+}
+
 async function decodeSampleArrayBuffer(arr) {
   await ensureAudio();
   // decodeAudioData may detach its ArrayBuffer in some browsers, so decode a copy.
@@ -1028,6 +1133,7 @@ async function loadTrackSampleFromFile(track, file) {
       name: file.name,
       type: file.type || 'audio/mpeg',
       rootMidi: trackSampleRoot(track),
+      sustain: !!(track.sample?.sustain || track.sample?.stretch),
       loadedAt: new Date().toISOString()
     };
     track.instrument = 'sample';
@@ -1048,7 +1154,7 @@ async function loadTrackSampleFromUrl(track, url, rootMidi=60) {
     if (!r.ok) throw new Error('Failed to fetch ' + url);
     const buf = await decodeSampleArrayBuffer(await r.arrayBuffer());
     sampleBuffers[track.id] = buf;
-    track.sample = { name: url.split('/').pop(), url, rootMidi: clamp(Math.round(rootMidi), MIDI_MIN, MIDI_MAX) };
+    track.sample = { name: url.split('/').pop(), url, rootMidi: clamp(Math.round(rootMidi), MIDI_MIN, MIDI_MAX), sustain: !!(track.sample?.sustain || track.sample?.stretch) };
     track.instrument = 'sample';
     renderTrackHeaders();
     saveProject();
@@ -1082,9 +1188,102 @@ function playSampleNote(track, midiNote, dur, t, dest, velocity=100) {
   src.stop(t + dur + rel + 0.03);
 }
 
+function playSustainedSampleNote(track, midiNote, dur, t, dest, velocity=100) {
+  const ctx = audioCtx;
+  const buffer = sampleBuffers[track.id];
+  if (!ctx || !buffer) return;
+
+  const semis = midiNote - trackSampleRoot(track);
+  const rate = Math.pow(2, semis / 12);
+  const naturalDur = buffer.duration / rate;
+
+  // For short notes, just play normally. Sustain is mainly for notes longer than the sample's natural length.
+  if (dur <= Math.min(naturalDur * 0.9, naturalDur - 0.03) || buffer.duration < 0.12) {
+    return playSampleNote(track, midiNote, dur, t, dest, velocity);
+  }
+
+  const src = ctx.createBufferSource();
+  src.buffer = buffer;
+  src.playbackRate.setValueAtTime(rate, t);
+
+  // Sustain loop: preserve pitch, repeat a stable middle/tail section until note release.
+  // This avoids the fun-house artifacts of granular time-stretching. Loop points are automatic for now.
+  const minLoop = Math.min(0.08, buffer.duration * 0.25);
+  let loopStart = track.sample?.loopStart ?? Math.max(0.02, buffer.duration * 0.35);
+  let loopEnd   = track.sample?.loopEnd   ?? Math.max(loopStart + minLoop, buffer.duration * 0.85);
+  loopStart = clamp(loopStart, 0, Math.max(0, buffer.duration - minLoop));
+  loopEnd   = clamp(loopEnd, loopStart + minLoop, buffer.duration);
+  src.loop = true;
+  src.loopStart = loopStart;
+  src.loopEnd = loopEnd;
+
+  const g = ctx.createGain();
+  const amp = clamp((velocity || 100) / 127, 0, 1) * 0.82;
+  const atk = 0.006;
+  const rel = Math.min(0.16, Math.max(0.04, dur * 0.18));
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.linearRampToValueAtTime(amp, t + atk);
+  g.gain.setValueAtTime(amp, t + Math.max(atk, dur - rel));
+  g.gain.linearRampToValueAtTime(0.0001, t + dur + rel);
+
+  src.connect(g);
+  g.connect(dest);
+  src.start(t);
+  src.stop(t + dur + rel + 0.03);
+}
+
+function playStretchedSampleNote(track, midiNote, dur, t, dest, velocity=100) {
+  const ctx = audioCtx;
+  const buffer = sampleBuffers[track.id];
+  if (!ctx || !buffer || dur <= 0.03) return playSampleNote(track, midiNote, dur, t, dest, velocity);
+
+  // Simple granular stretch: each grain is pitch-shifted by playbackRate,
+  // but the read head advances to cover the sample across the MIDI note length.
+  // This is much less pitch-warped than changing playbackRate just to fit the note.
+  const semis = midiNote - trackSampleRoot(track);
+  const pitchRate = Math.pow(2, semis / 12);
+  const naturalDur = buffer.duration / pitchRate;
+  const stretchRatio = dur / Math.max(naturalDur, 0.001);
+  if (stretchRatio > 0.92 && stretchRatio < 1.08) return playSampleNote(track, midiNote, dur, t, dest, velocity);
+
+  const amp = clamp((velocity || 100) / 127, 0, 1) * 0.65;
+  const grainDur = clamp(Math.min(0.09, dur / 3), 0.035, 0.09);
+  const hop = grainDur * 0.38;
+  const fade = Math.min(0.018, hop * 0.45);
+  const usable = Math.max(0.001, buffer.duration - grainDur * pitchRate);
+  const srcRate = usable / Math.max(dur, 0.001);
+  const maxGrains = Math.min(320, Math.ceil(dur / hop) + 2);
+
+  for (let i=0; i<maxGrains; i++) {
+    const outOffset = i * hop;
+    if (outOffset > dur + grainDur) break;
+    const when = t + outOffset;
+    const srcOffset = clamp(outOffset * srcRate, 0, usable);
+    const src = ctx.createBufferSource();
+    src.buffer = buffer;
+    src.playbackRate.setValueAtTime(pitchRate, when);
+    const g = ctx.createGain();
+
+    // Equal-ish overlap envelope. First and last grains are trimmed by the note envelope.
+    const noteFadeIn = clamp(outOffset / 0.025, 0, 1);
+    const noteFadeOut = clamp((dur - outOffset) / 0.04, 0, 1);
+    const level = amp * Math.min(noteFadeIn, noteFadeOut);
+    g.gain.setValueAtTime(0.0001, when);
+    g.gain.linearRampToValueAtTime(Math.max(0.0001, level), when + fade);
+    g.gain.setValueAtTime(Math.max(0.0001, level), when + Math.max(fade, grainDur - fade));
+    g.gain.linearRampToValueAtTime(0.0001, when + grainDur);
+
+    src.connect(g);
+    g.connect(dest);
+    src.start(when, srcOffset);
+    src.stop(when + grainDur + 0.01);
+  }
+}
+
 function playTrackMidiNote(track, midiNote, durSec, t, dest, velocity=100) {
   if (track.instrument === 'sample') {
-    playSampleNote(track, midiNote, durSec, t, dest, velocity);
+    if (track.sample?.sustain || track.sample?.stretch) playSustainedSampleNote(track, midiNote, durSec, t, dest, velocity);
+    else playSampleNote(track, midiNote, durSec, t, dest, velocity);
   } else {
     playNote(track.instrument, midiToHz(midiNote), durSec, t, dest);
   }
@@ -1803,6 +2002,8 @@ function renderTrackHeaders() {
         <span class="sample-name" title="Loaded sample file name. Audio files must be reloaded after a browser refresh.">${trackSampleName(track) || (track.instrument==='sample' ? 'sample not loaded' : '')}</span>
         <span title="Root MIDI: the MIDI note number the sample was originally recorded at. C4 = 60.">Root</span>
         <input type="number" class="sample-root" data-action="sample-root" min="21" max="108" step="1" value="${trackSampleRoot(track)}" title="Root MIDI note for the sample. Example: piano_C4.mp3 should use 60.">
+        <button class="sample-load sample-sustain ${track.sample?.sustain||track.sample?.stretch?'on':''}" data-action="sample-sustain" title="Sustain: hold long MIDI notes by looping the sample's middle/tail at the correct pitch. More natural than time-stretching.">Sustain</button>
+        <button class="sample-auto" data-action="sample-autoshift" title="AutoShift: set Root MIDI automatically from the sample filename, detected sample pitch, or the MIDI notes on this track.">AutoShift</button>
       </div>`;
 
     // FX panel
@@ -1885,6 +2086,17 @@ function renderTrackHeaders() {
       e.target.value = track.sample.rootMidi;
       saveProject();
       setStatus(`${track.label} sample root MIDI set to ${track.sample.rootMidi}`);
+    });
+    card.querySelector('[data-action="sample-sustain"]').addEventListener('click', e => {
+      e.stopPropagation();
+      track.sample = { ...(track.sample || {}), rootMidi: trackSampleRoot(track), sustain: !(track.sample?.sustain || track.sample?.stretch), stretch:false };
+      e.currentTarget.classList.toggle('on', !!track.sample.sustain);
+      saveProject();
+      setStatus(`${track.label} sample sustain ${track.sample.sustain ? 'on' : 'off'}`);
+    });
+    card.querySelector('[data-action="sample-autoshift"]').addEventListener('click', e => {
+      e.stopPropagation();
+      autoShiftSampleTrack(track, card.querySelector('[data-action="sample-root"]'));
     });
     card.querySelector('[data-action="vol"]').addEventListener('input', e => {
       track.volume = +e.target.value;
@@ -2354,18 +2566,40 @@ function prepareImport(incomingTracks, targetSectionId) {
   const incomingIsDrum = incomingValues.length > 0 && incomingValues.every(isDrum);
 
   const savedSettings = {};
+  const savedSettingList = [];
+  const sampleBufferTransfers = [];
   for (const t of Object.values(sec.tracks)) {
     if (isDrum(t) === incomingIsDrum) {
-      savedSettings[t.label] = { instrument:t.instrument, volume:t.volume,
+      const saved = {
+        id:t.id, label:t.label, instrument:t.instrument, volume:t.volume,
         muted:t.muted, soloed:t.soloed, reverbSend:t.reverbSend,
-        color:t.color, effects:{...t.effects} };
+        color:t.color, sample:t.sample ? cloneData(t.sample) : null,
+        hasSampleBuffer: !!sampleBuffers[t.id],
+        effects:{...t.effects}
+      };
+      savedSettings[t.label] = saved;
+      savedSettingList.push(saved);
     }
   }
+  const usedSavedSettings = new Set();
   const restore = track => {
-    const s = savedSettings[track.label];
-    return s ? { ...track, instrument:s.instrument, volume:s.volume,
+    // Prefer exact label matches so Chords/Bass/Arpeggio each keep their own settings.
+    // Fallback to a single unmatched sample setting so user-loaded sample tracks survive a new MIDI drop.
+    let s = savedSettings[track.label];
+    if (!s) {
+      const sampleCandidates = savedSettingList.filter(x =>
+        !usedSavedSettings.has(x) && (x.instrument === 'sample' || x.sample || x.hasSampleBuffer)
+      );
+      if (sampleCandidates.length === 1) s = sampleCandidates[0];
+    }
+    if (!s) return track;
+    usedSavedSettings.add(s);
+    const restored = { ...track, instrument:s.instrument, volume:s.volume,
       muted:s.muted, soloed:s.soloed, reverbSend:s.reverbSend,
-      color:s.color, effects:{...s.effects} } : track;
+      color:s.color, sample:s.sample ? cloneData(s.sample) : undefined,
+      effects:{...DEFAULT_FX(), ...s.effects} };
+    if (s.hasSampleBuffer) sampleBufferTransfers.push({ fromId:s.id, toId:restored.id });
+    return restored;
   };
 
   const toDelete = Object.entries(sec.tracks)
@@ -2387,13 +2621,21 @@ function prepareImport(incomingTracks, targetSectionId) {
   for (const t of Object.values(simTracks))
     for (const n of t.notes) maxBeat = Math.max(maxBeat, n.beatStart + n.duration);
 
-  return { toDelete, toAdd, newLengthBars: Math.ceil(maxBeat / 4) };
+  return { toDelete, toAdd, newLengthBars: Math.ceil(maxBeat / 4), sampleBufferTransfers };
 }
 
 // Apply a prepared import and refresh UI
 function applyImport(prepared, targetSectionId) {
   const sec = project.sections[targetSectionId];
-  for (const id of prepared.toDelete) delete sec.tracks[id];
+  const buffersToMove = {};
+  for (const tr of prepared.sampleBufferTransfers || []) {
+    if (sampleBuffers[tr.fromId]) buffersToMove[tr.toId] = sampleBuffers[tr.fromId];
+  }
+  for (const id of prepared.toDelete) {
+    delete sec.tracks[id];
+    if (!Object.values(buffersToMove).includes(sampleBuffers[id])) delete sampleBuffers[id];
+  }
+  for (const [id, buf] of Object.entries(buffersToMove)) sampleBuffers[id] = buf;
   for (const t of prepared.toAdd) sec.tracks[t.id] = t;
   sec.lengthBars = prepared.newLengthBars;
   if (!sec.tracks[selectedTrackId] && prepared.toAdd.length) selectedTrackId = prepared.toAdd[0].id;
@@ -3190,5 +3432,5 @@ function init() {
 
 init();
 </script>
-<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a02e13ce89b353a7',t:'MTc3OTk3OTg4NQ=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
+<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a02e91097e182950',t:'MTc3OTk4NTAxNQ=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
 </html>
