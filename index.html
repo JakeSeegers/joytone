@@ -112,6 +112,14 @@ button.danger:hover{background:#4a1a1a;border-color:#aa3333}
   background:#1e1e28;cursor:pointer;font-size:12px;font-weight:600
 }
 .sec-tab.active{background:#2d2d50;border-color:#4444aa;color:#aaf}
+.sec-tab.playing{box-shadow:0 0 0 1px #66dd88 inset,0 0 10px rgba(80,255,140,.35);border-color:#55aa66;color:#cfc}
+.sec-tab.active.playing{background:#254a35;border-color:#66cc88;color:#dfffdf}
+.sec-order-item{display:inline-flex;align-items:center;gap:2px;padding:1px 4px;border:1px solid #333;border-radius:3px;background:#1e1e28}
+.sec-order-item.playing{background:#244632;border-color:#66cc88;color:#dfffdf;box-shadow:0 0 9px rgba(80,255,140,.28)}
+.sec-order-name{padding:0 3px;cursor:pointer;font-weight:600}
+.sec-order-move,.sec-order-remove{padding:0 3px;border:none;background:transparent;color:#777;font-size:10px;line-height:1;min-width:0}
+.sec-order-move:hover{color:#cdf;background:#2e2e42}
+.sec-order-remove:hover{color:#f88;background:rgba(255,80,80,.15)}
 .sec-tab:hover:not(.active){background:#252535}
 .sec-del{
   font-size:14px;line-height:1;color:#666;padding:0 1px;
@@ -314,7 +322,8 @@ input[type=range]{cursor:pointer}
   <div id="section-strip">
     <span class="lbl">Section:</span>
     <div id="section-tabs"><!-- filled by JS --></div>
-    <button id="btn-add-section" style="padding:2px 8px;font-size:11px">+ Add</button>
+    <button id="btn-add-section" style="padding:2px 8px;font-size:11px" title="Create a new blank section">+ Add</button>
+    <button id="btn-dup-section" style="padding:2px 8px;font-size:11px" title="Duplicate the active section, including notes, FX settings, and loaded samples">⧉ Duplicate</button>
     <div class="sep"></div>
     <span class="lbl">Play&nbsp;order:</span>
     <div id="section-order" style="display:flex;gap:4px;align-items:center;font-size:11px;color:#aaa">
@@ -1517,6 +1526,7 @@ function startPlayback(fromBeat) {
   schedInterval = setInterval(scheduleAhead, SCHED_MS);
   document.getElementById('btn-play').textContent = '⏸ Pause';
   document.getElementById('btn-play').classList.add('playing');
+  updatePlayingSectionHighlight();
   requestAnimationFrame(animLoop);
 }
 
@@ -1527,6 +1537,7 @@ function stopPlayback() {
   if (hissGainNode && audioCtx) hissGainNode.gain.setTargetAtTime(0, audioCtx.currentTime, 1.5);
   document.getElementById('btn-play').textContent = '▶ Play';
   document.getElementById('btn-play').classList.remove('playing');
+  updatePlayingSectionHighlight();
   PR.dirty = true; schedRedraw();
 }
 
@@ -1611,6 +1622,7 @@ function animLoop() {
   const secs = beatToSec(beat);
   const m = Math.floor(secs/60), s = Math.floor(secs%60);
   document.getElementById('playhead-time').textContent = `${m}:${s.toString().padStart(2,'0')}`;
+  updatePlayingSectionHighlight();
   animFrameId = requestAnimationFrame(animLoop);
 }
 
@@ -2155,14 +2167,48 @@ function addTrack() {
 }
 
 // ── SECTION MANAGEMENT ─────────────────────────────────────────────
+function nextSectionId(base='A') {
+  const used = new Set(Object.keys(project.sections));
+  for (let i=0; i<26; i++) {
+    const id = String.fromCharCode(65+i);
+    if (!used.has(id)) return id;
+  }
+  let n = 2;
+  while (used.has(base + n)) n++;
+  return base + n;
+}
+
+function currentPlayingOrderIndex() {
+  if (!isPlaying || !project?.sectionOrder?.length) return -1;
+  return ((currentSectionPlayIdx % project.sectionOrder.length) + project.sectionOrder.length) % project.sectionOrder.length;
+}
+
+function currentPlayingSectionId() {
+  const idx = currentPlayingOrderIndex();
+  return idx >= 0 ? project.sectionOrder[idx] : null;
+}
+
+function updatePlayingSectionHighlight() {
+  const playingIdx = currentPlayingOrderIndex();
+  const playingId = currentPlayingSectionId();
+  document.querySelectorAll('.sec-tab').forEach(el => {
+    el.classList.toggle('playing', !!playingId && el.dataset.secId === playingId);
+  });
+  document.querySelectorAll('.sec-order-item').forEach(el => {
+    el.classList.toggle('playing', +el.dataset.oi === playingIdx);
+  });
+}
+
 function renderSectionUI() {
   // Tabs
   const tabs = document.getElementById('section-tabs');
   tabs.innerHTML = '';
   project.sectionOrder.forEach(id => {
     const sec = project.sections[id];
+    if (!sec) return;
     const btn = document.createElement('button');
-    btn.className = 'sec-tab' + (id===activeSectionId?' active':'');
+    btn.className = 'sec-tab' + (id===activeSectionId?' active':'') + (id===currentPlayingSectionId()?' playing':'');
+    btn.dataset.secId = id;
     btn.title = `Section ${id} — click to switch`;
 
     const lbl = document.createElement('span');
@@ -2183,20 +2229,56 @@ function renderSectionUI() {
     tabs.appendChild(btn);
   });
 
-  // Order display
+  // Play-order display with reorder controls
   const orderDiv = document.getElementById('section-order');
-  orderDiv.innerHTML = project.sectionOrder.map((id,i) =>
-    `<span style="cursor:pointer;padding:1px 6px;border:1px solid #333;border-radius:3px;background:#1e1e28"
-      title="Click to remove from order" data-oi="${i}">${id}</span>`
-  ).join('<span style="color:#444">→</span>');
-  orderDiv.querySelectorAll('[data-oi]').forEach(el => {
-    el.addEventListener('click', () => {
-      if (project.sectionOrder.length > 1) {
-        project.sectionOrder.splice(+el.dataset.oi, 1);
-        renderSectionUI(); saveProject();
-      }
-    });
+  orderDiv.innerHTML = '';
+  project.sectionOrder.forEach((id, i) => {
+    if (i > 0) {
+      const arrow = document.createElement('span');
+      arrow.style.color = '#444';
+      arrow.textContent = '→';
+      orderDiv.appendChild(arrow);
+    }
+    const item = document.createElement('span');
+    item.className = 'sec-order-item' + (i===currentPlayingOrderIndex()?' playing':'');
+    item.dataset.oi = i;
+    item.title = `Play-order slot ${i+1}: Section ${id}`;
+
+    const left = document.createElement('button');
+    left.className = 'sec-order-move';
+    left.textContent = '‹';
+    left.title = 'Move section earlier';
+    left.disabled = i === 0;
+    left.addEventListener('click', e => { e.stopPropagation(); moveSectionOrder(i, i-1); });
+    item.appendChild(left);
+
+    const name = document.createElement('span');
+    name.className = 'sec-order-name';
+    name.textContent = id;
+    name.title = `Click to switch to Section ${id}`;
+    name.addEventListener('click', () => switchSection(id));
+    item.appendChild(name);
+
+    const right = document.createElement('button');
+    right.className = 'sec-order-move';
+    right.textContent = '›';
+    right.title = 'Move section later';
+    right.disabled = i === project.sectionOrder.length - 1;
+    right.addEventListener('click', e => { e.stopPropagation(); moveSectionOrder(i, i+1); });
+    item.appendChild(right);
+
+    if (project.sectionOrder.length > 1) {
+      const rm = document.createElement('button');
+      rm.className = 'sec-order-remove';
+      rm.textContent = '×';
+      rm.title = `Remove/delete Section ${id}`;
+      rm.addEventListener('click', e => { e.stopPropagation(); deleteSection(id); });
+      item.appendChild(rm);
+    }
+
+    orderDiv.appendChild(item);
   });
+  updatePlayingSectionHighlight();
 }
 
 function switchSection(id) {
@@ -2210,10 +2292,7 @@ function switchSection(id) {
 }
 
 function addSection() {
-  // Find next available letter
-  const used = new Set(Object.keys(project.sections));
-  let id = 'A';
-  for (let i=0;i<26;i++) { id=String.fromCharCode(65+i); if (!used.has(id)) break; }
+  const id = nextSectionId();
   pushUndo();
   // Start blank — user will drop MIDIs in independently
   project.sections[id] = makeSection(id);
@@ -2222,12 +2301,54 @@ function addSection() {
   saveProject();
 }
 
+function moveSectionOrder(fromIdx, toIdx) {
+  if (toIdx < 0 || toIdx >= project.sectionOrder.length || fromIdx === toIdx) return;
+  pushUndo();
+  const [id] = project.sectionOrder.splice(fromIdx, 1);
+  project.sectionOrder.splice(toIdx, 0, id);
+  renderSectionUI();
+  saveProject();
+}
+
+function duplicateSection(sourceId = activeSectionId) {
+  const src = project.sections[sourceId];
+  if (!src) return;
+  pushUndo();
+  const newId = nextSectionId(sourceId);
+  const dup = cloneData(src);
+  dup.id = newId;
+  dup.label = newId;
+  dup.tracks = {};
+
+  for (const [oldTrackId, oldTrack] of Object.entries(src.tracks || {})) {
+    const newTrack = cloneData(oldTrack);
+    newTrack.id = uid();
+    newTrack.notes = (oldTrack.notes || []).map(n => ({ ...cloneData(n), id: uid() }));
+    if (newTrack.sample) newTrack.sample = cloneData(newTrack.sample);
+    dup.tracks[newTrack.id] = newTrack;
+    if (sampleBuffers[oldTrackId]) sampleBuffers[newTrack.id] = sampleBuffers[oldTrackId];
+  }
+
+  project.sections[newId] = dup;
+  const idx = project.sectionOrder.indexOf(sourceId);
+  project.sectionOrder.splice(idx >= 0 ? idx + 1 : project.sectionOrder.length, 0, newId);
+  activeSectionId = newId;
+  selectedTrackId = Object.keys(dup.tracks)[0] || null;
+  if (audioCtx) rebuildEngines();
+  renderTrackHeaders();
+  renderSectionUI();
+  PR.gridDirty = true; PR.dirty = true; schedRedraw();
+  saveProject();
+  setStatus(`Section ${sourceId} duplicated as ${newId}`);
+}
+
 function deleteSection(id) {
   if (project.sectionOrder.length <= 1) return; // must keep at least one
   pushUndo();
 
   // Remove from order (all occurrences) and from sections map
   project.sectionOrder = project.sectionOrder.filter(s => s !== id);
+  for (const tid of Object.keys(project.sections[id]?.tracks || {})) delete sampleBuffers[tid];
   delete project.sections[id];
 
   // If we just deleted the active section, switch to the first remaining one
@@ -3402,6 +3523,7 @@ document.getElementById('btn-reset').addEventListener('click', () => {
 });
 document.getElementById('btn-add-track').addEventListener('click', async () => { await ensureAudio(); addTrack(); });
 document.getElementById('btn-add-section').addEventListener('click', addSection);
+document.getElementById('btn-dup-section').addEventListener('click', () => duplicateSection(activeSectionId));
 
 // ── INIT ───────────────────────────────────────────────────────────
 function init() {
@@ -3431,5 +3553,5 @@ function init() {
 
 init();
 </script>
-<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a02e91097e182950',t:'MTc3OTk4NTAxNQ=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
+</body>
 </html>
