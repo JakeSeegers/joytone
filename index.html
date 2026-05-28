@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -151,6 +150,10 @@ button.danger:hover{background:#4a1a1a;border-color:#aa3333}
 .rev-slider{width:50px;height:3px;accent-color:#336655;cursor:pointer}
 .pan-slider{width:46px;height:3px;accent-color:#aa6655;cursor:pointer}
 .fx-toggle{font-size:10px;padding:2px 5px;border-radius:3px}
+.sample-row{font-size:10px;color:#777}
+.sample-load{font-size:10px;padding:2px 6px;border-radius:3px}
+.sample-root{width:42px!important;padding:1px 3px!important;font-size:10px!important}
+.sample-name{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#888}
 
 /* Per-track effects panel */
 .track-fx{
@@ -399,6 +402,7 @@ const INSTRUMENTS = [
   {id:'guitar',  label:'Guitar'},
   {id:'flute',   label:'Flute'},
   {id:'synth',   label:'Synth'},
+  {id:'sample',  label:'Sample'},
   {id:'kick',    label:'Kick'},
   {id:'snare',   label:'Snare'},
   {id:'hat',     label:'Hat'},
@@ -460,6 +464,7 @@ let noiseBuffer   = null;
 let hissGainNode  = null;  // tape hiss master volume — muted when stopped
 let bassBoost     = null;  // low-shelf EQ on master bus
 const trackEngines = {};      // trackId → TrackEngine instance
+const sampleBuffers = {};      // trackId → decoded AudioBuffer for loaded MP3/sample instrument
 
 // Scheduler
 let schedInterval  = null;
@@ -556,10 +561,11 @@ function makeTrack(overrides={}) {
   const idx = Object.keys(
     project ? (project.sections[activeSectionId]?.tracks||{}) : {}
   ).length;
+  const defaultInstruments = INSTRUMENTS.filter(i => !['kick','snare','hat','sample'].includes(i.id));
   return {
     id: uid(),
     label: `Track ${idx+1}`,
-    instrument: INSTRUMENTS[idx % (INSTRUMENTS.length-3)].id,
+    instrument: defaultInstruments[idx % defaultInstruments.length].id,
     color: TRACK_COLORS[idx % TRACK_COLORS.length],
     volume: 0.8,
     muted: false,
@@ -667,6 +673,7 @@ function normalizeProjectData() {
         ...(INST_FILTER[track.instrument] || {}),
         ...(track.effects || {})
       };
+      if (track.sample) track.sample.rootMidi = clamp(Math.round(track.sample.rootMidi ?? 60), MIDI_MIN, MIDI_MAX);
     }
   }
 }
@@ -996,6 +1003,106 @@ function noiseBurst(ctx, dest, t, dur, fType, fFreq, fQ, gain) {
   src.start(t); src.stop(t+dur+0.01);
 }
 
+function trackSampleRoot(track) {
+  return clamp(Math.round(track.sample?.rootMidi ?? 60), MIDI_MIN, MIDI_MAX);
+}
+
+function trackSampleName(track) {
+  return track.sample?.name || track.sample?.url?.split('/').pop() || '';
+}
+
+async function decodeSampleArrayBuffer(arr) {
+  await ensureAudio();
+  // decodeAudioData may detach its ArrayBuffer in some browsers, so decode a copy.
+  return await audioCtx.decodeAudioData(arr.slice(0));
+}
+
+async function loadTrackSampleFromFile(track, file) {
+  if (!track || !file) return;
+  try {
+    await ensureAudio();
+    const buf = await decodeSampleArrayBuffer(await file.arrayBuffer());
+    sampleBuffers[track.id] = buf;
+    track.sample = {
+      ...(track.sample || {}),
+      name: file.name,
+      type: file.type || 'audio/mpeg',
+      rootMidi: trackSampleRoot(track),
+      loadedAt: new Date().toISOString()
+    };
+    track.instrument = 'sample';
+    renderTrackHeaders();
+    saveProject();
+    setStatus(`Loaded sample for ${track.label}: ${file.name} · Root MIDI ${track.sample.rootMidi}`);
+  } catch(err) {
+    setStatus('Sample load error: ' + err.message, true);
+  }
+}
+
+async function loadTrackSampleFromUrl(track, url, rootMidi=60) {
+  // Programmatic helper for preloaded files, e.g. loadTrackSampleFromUrl(track, 'piano_C4.mp3', 60)
+  if (!track || !url) return;
+  try {
+    await ensureAudio();
+    const r = await fetch(url);
+    if (!r.ok) throw new Error('Failed to fetch ' + url);
+    const buf = await decodeSampleArrayBuffer(await r.arrayBuffer());
+    sampleBuffers[track.id] = buf;
+    track.sample = { name: url.split('/').pop(), url, rootMidi: clamp(Math.round(rootMidi), MIDI_MIN, MIDI_MAX) };
+    track.instrument = 'sample';
+    renderTrackHeaders();
+    saveProject();
+    setStatus(`Loaded sample for ${track.label}: ${track.sample.name}`);
+  } catch(err) {
+    setStatus('Sample URL load error: ' + err.message, true);
+  }
+}
+
+function playSampleNote(track, midiNote, dur, t, dest, velocity=100) {
+  const ctx = audioCtx;
+  const buffer = sampleBuffers[track.id];
+  if (!ctx || !buffer) return;
+  const src = ctx.createBufferSource();
+  src.buffer = buffer;
+  const semis = midiNote - trackSampleRoot(track);
+  const rate = Math.pow(2, semis / 12);
+  src.playbackRate.setValueAtTime(rate, t);
+
+  const g = ctx.createGain();
+  const amp = clamp((velocity || 100) / 127, 0, 1) * 0.85;
+  const atk = 0.004, rel = Math.min(0.08, Math.max(0.02, dur * 0.15));
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.linearRampToValueAtTime(amp, t + atk);
+  g.gain.setValueAtTime(amp, t + Math.max(atk, dur - rel));
+  g.gain.linearRampToValueAtTime(0.0001, t + dur + rel);
+
+  src.connect(g);
+  g.connect(dest);
+  src.start(t);
+  src.stop(t + dur + rel + 0.03);
+}
+
+function playTrackMidiNote(track, midiNote, durSec, t, dest, velocity=100) {
+  if (track.instrument === 'sample') {
+    playSampleNote(track, midiNote, durSec, t, dest, velocity);
+  } else {
+    playNote(track.instrument, midiToHz(midiNote), durSec, t, dest);
+  }
+}
+
+function playScheduledTrackNote(track, note, t, dest) {
+  playTrackMidiNote(track, note.midiNote, beatToSec(note.duration), t, dest, note.velocity);
+}
+
+// Expose URL loaders for users who host a sample file beside the app.
+// Example: loadSelectedTrackSampleFromUrl('piano_C4.mp3', 60)
+window.loadTrackSampleFromUrl = loadTrackSampleFromUrl;
+window.loadSelectedTrackSampleFromUrl = (url, rootMidi=60) => {
+  const track = ensureSelectedTrack();
+  if (!track) { setStatus('Select a track before loading a sample URL', true); return; }
+  return loadTrackSampleFromUrl(track, url, rootMidi);
+};
+
 function playNote(instrument, freq, dur, t, dest) {
   switch(instrument) {
     case 'bell':    playBell(freq,dur,t,dest); break;
@@ -1275,7 +1382,7 @@ function scheduleAhead() {
           if (noteBeat >= beatInSec && noteBeat < sliceEnd && noteBeat < secLenBeats) {
             const t = playStartCtxTime + beatToSec(sectionBeatOffset + noteBeat - playStartBeat);
             if (t >= now - 0.01) {
-              playNote(track.instrument, midiToHz(note.midiNote), beatToSec(note.duration), t, engine.dest());
+              playScheduledTrackNote(track, note, t, engine.dest());
             }
           }
         }
@@ -1538,7 +1645,7 @@ noteCanvas.addEventListener('mousedown', async e => {
       const track = ensureSelectedTrack();
       const eng = track ? getOrCreateEngine(track) : Object.values(trackEngines)[0];
       const dest = eng ? eng.dest() : masterBus;
-      if (track) playNote(track.instrument, midiToHz(midi), 0.5, audioCtx.currentTime, dest);
+      if (track) playTrackMidiNote(track, midi, 0.5, audioCtx.currentTime, dest, 100);
     }
     return;
   }
@@ -1591,7 +1698,7 @@ noteCanvas.addEventListener('mousedown', async e => {
       dragState = { type:'draw', noteId:note.id, trackId:target.id, startX:x, origBeat:beat, origMidi:midi };
       // preview sound
       const eng = getOrCreateEngine(target);
-      playNote(target.instrument, midiToHz(midi), dur, audioCtx.currentTime, eng.dest());
+      playTrackMidiNote(target, midi, beatToSec(dur), audioCtx.currentTime, eng.dest(), 100);
     }
     PR.dirty = true; schedRedraw(); saveProject();
   }
@@ -1689,6 +1796,13 @@ function renderTrackHeaders() {
         <input type="range" class="pan-slider" data-action="pan" min="-1" max="1" step="0.01" value="${track.effects.pan ?? 0}" title="Pan: -1 is left, 0 is center, +1 is right.">
         <button class="fx-toggle" data-action="fx" title="FX: delay, filter, saturation, and LFO sound-shaping controls.">FX</button>
         <button class="fx-toggle" data-action="eq" title="EQ: tone controls for cutting or boosting bass, mids, and highs.">EQ</button>
+      </div>
+      <div class="track-row3 sample-row">
+        <button class="sample-load" data-action="sample" title="Load an MP3/WAV/OGG sample for this track. MIDI notes will pitch-shift this sample from the Root MIDI note.">Load MP3</button>
+        <input type="file" class="sample-file-input" accept="audio/*,.mp3,.wav,.ogg,.m4a" style="display:none">
+        <span class="sample-name" title="Loaded sample file name. Audio files must be reloaded after a browser refresh.">${trackSampleName(track) || (track.instrument==='sample' ? 'sample not loaded' : '')}</span>
+        <span title="Root MIDI: the MIDI note number the sample was originally recorded at. C4 = 60.">Root</span>
+        <input type="number" class="sample-root" data-action="sample-root" min="21" max="108" step="1" value="${trackSampleRoot(track)}" title="Root MIDI note for the sample. Example: piano_C4.mp3 should use 60.">
       </div>`;
 
     // FX panel
@@ -1746,12 +1860,31 @@ function renderTrackHeaders() {
       // Remove only from the active section — sections are independent
       delete project.sections[activeSectionId].tracks[track.id];
       trackEngines[track.id]?.destroy(); delete trackEngines[track.id];
+      delete sampleBuffers[track.id];
       if (selectedTrackId === track.id) selectedTrackId = null;
       ensureSelectedTrack();
       renderTrackHeaders(); PR.dirty=true; schedRedraw(); saveProject();
     });
     card.querySelector('[data-action="inst"]').addEventListener('change', e => {
-      track.instrument = e.target.value; saveProject();
+      track.instrument = e.target.value;
+      if (track.instrument === 'sample' && !sampleBuffers[track.id]) {
+        setStatus(`Sample instrument selected for ${track.label} — click Load MP3 to choose a source sample`);
+      }
+      saveProject();
+    });
+    card.querySelector('[data-action="sample"]').addEventListener('click', e => {
+      e.stopPropagation();
+      card.querySelector('.sample-file-input').click();
+    });
+    card.querySelector('.sample-file-input').addEventListener('change', e => {
+      if (e.target.files[0]) loadTrackSampleFromFile(track, e.target.files[0]);
+      e.target.value = '';
+    });
+    card.querySelector('[data-action="sample-root"]').addEventListener('change', e => {
+      track.sample = { ...(track.sample || {}), rootMidi: clamp(Math.round(+e.target.value || 60), MIDI_MIN, MIDI_MAX) };
+      e.target.value = track.sample.rootMidi;
+      saveProject();
+      setStatus(`${track.label} sample root MIDI set to ${track.sample.rootMidi}`);
     });
     card.querySelector('[data-action="vol"]').addEventListener('input', e => {
       track.volume = +e.target.value;
@@ -2357,7 +2490,7 @@ async function bounceWav() {
       const engine = new TrackEngine(track);
       for (const note of track.notes) {
         const t = tOffset + note.beatStart * 60 / bpm;
-        playNote(track.instrument, midiToHz(note.midiNote), note.duration*60/bpm, t, engine.dest());
+        playTrackMidiNote(track, note.midiNote, note.duration*60/bpm, t, engine.dest(), note.velocity);
       }
     }
     tOffset += secLenSecs;
@@ -2586,6 +2719,7 @@ function captureTrackFxSettings(track) {
     muted: track.muted,
     soloed: track.soloed,
     reverbSend: track.reverbSend,
+    sample: track.sample ? cloneData(track.sample) : null,
     effects: cloneData({ ...DEFAULT_FX(), ...(track.effects || {}) })
   };
 }
@@ -2782,6 +2916,7 @@ function finishFxSnapshotRecall(serial, snap, trackPairs, targetMaster) {
     track.muted = !!target.muted;
     track.soloed = !!target.soloed;
     track.reverbSend = num(target.reverbSend, track.reverbSend);
+    track.sample = target.sample ? cloneData(target.sample) : track.sample;
     track.effects = { ...DEFAULT_FX(), ...(target.effects || {}) };
   }
 
@@ -3055,6 +3190,5 @@ function init() {
 
 init();
 </script>
-<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a02e06af882d5a8e',t:'MTc3OTk3OTM0OA=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script><script defer src="https://static.cloudflareinsights.com/beacon.min.js/v833ccba57c9e4d2798f2e76cebdd09a11778172276447" integrity="sha512-57MDmcccJXYtNnH+ZiBwzC4jb2rvgVCEokYN+L/nLlmO8rfYT/gIpW2A569iJ/3b+0UEasghjuZH/ma3wIs/EQ==" data-cf-beacon='{"version":"2024.11.0","token":"1954b47c125f43f8b4338b3c4f804e4f","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
-</body>
+<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a02e13ce89b353a7',t:'MTc3OTk3OTg4NQ=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
 </html>
