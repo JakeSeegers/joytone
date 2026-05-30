@@ -419,6 +419,58 @@ const INSTRUMENTS = [
   {id:'hat',     label:'Hat'},
 ];
 
+// Built-in MP3/WAV sample instruments (files live in mp3/). Selecting one lazy-loads
+// and decodes the file, then plays it pitch-shifted by note like the manual Sample instrument.
+const SAMPLE_INSTRUMENTS = [
+  // Melodic one-shots
+  { id:'smp_kalimba',   label:'Kalimba',           group:'Samples', file:'Single_kalimba_key_p_#1-1779982402422.mp3' },
+  { id:'smp_softorgan', label:'Soft Organ',        group:'Samples', file:'Single_long_soft_org_#3-1779982642422.mp3' },
+  { id:'smp_church',    label:'Church Organ',      group:'Samples', file:'Deep,_resonant_churc_#4-1779983212494.mp3' },
+  { id:'smp_piano',     label:'Soft Piano',        group:'Samples', file:'Deep_soft,piano_note_#1-1779987937345.mp3' },
+  { id:'smp_guitar',    label:'Soft Guitar',       group:'Samples', file:'Deep_soft,guitar_key_#4-1780181682186.mp3' },
+  { id:'smp_synth',     label:'Soft Synth',        group:'Samples', file:'Deep_soft,synth_key__#3-1780181711331.mp3' },
+  { id:'smp_bassdrone', label:'Bass Drone',        group:'Samples', file:'Deep_soft,bass_drone_#3-1779991161590.mp3' },
+  { id:'smp_calmpad1',  label:'Calm Pad 1',        group:'Samples', file:'Calm,_beautiful,_sin_#3-1780182182281.mp3' },
+  { id:'smp_calmpad2',  label:'Calm Pad 2',        group:'Samples', file:'Calm,_beautiful,_sin_#4-1780182189616.mp3' },
+  { id:'smp_flute',     label:'Flute',             group:'Samples', file:'flute_note_beat_one__#4-1780182028751.mp3' },
+  { id:'smp_bell',      label:'Bell',              group:'Samples', file:'one_bell_beat_#3-1780181819661.mp3' },
+  { id:'smp_deepbell',  label:'Deep Bell',         group:'Samples', file:'one_deep_bell_beat_#1-1780181837350.mp3' },
+  { id:'smp_chip1',     label:'Chiptune Guitar 1', group:'Samples', file:'one_chip_tune_guitar_#2-1780181887250.mp3' },
+  { id:'smp_chip2',     label:'Chiptune Guitar 2', group:'Samples', file:'one_chip_tune_guitar_#3-1780181865461.mp3' },
+  { id:'smp_chip3',     label:'Chiptune Guitar 3', group:'Samples', file:'one_chip_tune_guitar_#4-1780181887251.mp3' },
+  { id:'smp_estr1',     label:'Eastern Strings 1', group:'Samples', file:'eastern_string_instr_#1-1780181924910.mp3' },
+  { id:'smp_estr2',     label:'Eastern Strings 2', group:'Samples', file:'eastern_string_instr_#2-1780181927970.mp3' },
+  { id:'smp_estr3',     label:'Eastern Strings 3', group:'Samples', file:'eastern_string_instr_#4-1780181920962.mp3' },
+  // Percussion one-shots
+  { id:'smp_eastdrum',  label:'Eastern Drum',      group:'Percussion', file:'Eastern_drum_beat,_d_#1-1780181965369.mp3' },
+  { id:'smp_hat1',      label:'Hi-Hat 1',          group:'Percussion', file:'one_hi_hat_beat_#1-1780181746597.mp3' },
+  { id:'smp_hat2',      label:'Hi-Hat 2',          group:'Percussion', file:'one_hi_hat_beat_#3-1780181746598.mp3' },
+  { id:'smp_snare',     label:'Snare (MP3)',       group:'Percussion', file:'one_snare_beat_#3-1780181769017.mp3' },
+  // Kick drum pack (representative selection; converted from Logic AIFF exports to MP3
+  // because the bundled .wav files are actually AIFF and won't decode in all browsers).
+  { id:'smp_kick01',    label:'Kick 01',           group:'Kicks', file:'kick_01.mp3' },
+  { id:'smp_kick05',    label:'Kick 05',           group:'Kicks', file:'kick_05.mp3' },
+  { id:'smp_kick10',    label:'Kick 10',           group:'Kicks', file:'kick_10.mp3' },
+];
+const SAMPLE_INSTRUMENT_BY_ID = Object.fromEntries(SAMPLE_INSTRUMENTS.map(s => [s.id, s]));
+function isSampleInstrument(inst) { return inst === 'sample' || !!SAMPLE_INSTRUMENT_BY_ID[inst]; }
+function sampleInstrumentUrl(def) { return 'mp3/' + encodeURIComponent(def.file); }
+
+// Build the per-track instrument <select> markup: built-in synths/drums first,
+// then grouped <optgroup> submenus for the bundled MP3 sample instruments.
+function buildInstrumentOptions(selectedId) {
+  const opt = (id, label) =>
+    `<option value="${id}" ${id===selectedId?'selected':''}>${escapeHtml(label)}</option>`;
+  let html = INSTRUMENTS.map(i => opt(i.id, i.label)).join('');
+  const groups = {};
+  for (const s of SAMPLE_INSTRUMENTS) (groups[s.group] = groups[s.group] || []).push(s);
+  for (const [g, items] of Object.entries(groups)) {
+    html += `<optgroup label="${escapeHtml(g)}">` +
+            items.map(s => opt(s.id, s.label)).join('') + `</optgroup>`;
+  }
+  return html;
+}
+
 const TRACK_COLORS = [
   '#7c6aff','#ff6b6b','#4fc3f7','#81c784',
   '#ffb74d','#f06292','#4db6ac','#ff8a65',
@@ -558,6 +610,11 @@ function roundRect(ctx,x,y,w,h,r){
   ctx.lineTo(x+r,y+h); ctx.arcTo(x,y+h,x,y+h-r,r);
   ctx.lineTo(x,y+r); ctx.arcTo(x,y,x+r,y,r);
   ctx.closePath();
+}
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c =>
+    ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
 }
 
 function setStatus(msg, isErr) {
@@ -1172,6 +1229,51 @@ async function loadTrackSampleFromUrl(track, url, rootMidi=60) {
   }
 }
 
+// Built-in sample instruments: fetch + decode the bundled file the first time the
+// instrument is chosen, auto-detect its root pitch (fallback C4), and stash the buffer
+// under the track id so the existing sample-playback path can use it.
+const _sampleInstLoading = new Set();
+async function ensureSampleInstrumentLoaded(track) {
+  const def = SAMPLE_INSTRUMENT_BY_ID[track?.instrument];
+  if (!def) return;
+  if (sampleBuffers[track.id] && track.sample?.instrumentId === track.instrument) return;
+  const key = track.id + ':' + track.instrument;
+  if (_sampleInstLoading.has(key)) return;
+  _sampleInstLoading.add(key);
+  try {
+    await ensureAudio();
+    const url = sampleInstrumentUrl(def);
+    const r = await fetch(url);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const buf = await decodeSampleArrayBuffer(await r.arrayBuffer());
+    sampleBuffers[track.id] = buf;
+    // Pitch-detect only melodic samples; drums/kicks stay at C4 so the drawn note plays them untransposed.
+    let root = 60, detail = 'root C4';
+    if (def.group === 'Samples') {
+      const est = estimateSampleRootMidi(buf);
+      if (est) { root = est.midi; detail = `detected root ${noteLabel(est.midi)} (${est.confidence.toFixed(2)})`; }
+    }
+    track.sample = { ...(track.sample || {}), name: def.label, url, rootMidi: root, instrumentId: track.instrument, builtin: true };
+    renderTrackHeaders();
+    saveProject();
+    setStatus(`${def.label} loaded — ${detail}`);
+  } catch(err) {
+    setStatus(`Could not load ${def.label}: ${err.message}`, true);
+  } finally {
+    _sampleInstLoading.delete(key);
+  }
+}
+
+// Kick off loads for any sample-instrument tracks in the active section that aren't ready.
+function ensureActiveSampleInstrumentsLoaded() {
+  for (const track of Object.values(activeTracks())) {
+    if (SAMPLE_INSTRUMENT_BY_ID[track.instrument] &&
+        !(sampleBuffers[track.id] && track.sample?.instrumentId === track.instrument)) {
+      ensureSampleInstrumentLoaded(track);
+    }
+  }
+}
+
 function playSampleNote(track, midiNote, dur, t, dest, velocity=100) {
   const ctx = audioCtx;
   const buffer = sampleBuffers[track.id];
@@ -1289,7 +1391,7 @@ function playStretchedSampleNote(track, midiNote, dur, t, dest, velocity=100) {
 }
 
 function playTrackMidiNote(track, midiNote, durSec, t, dest, velocity=100) {
-  if (track.instrument === 'sample') {
+  if (isSampleInstrument(track.instrument)) {
     if (track.sample?.sustain || track.sample?.stretch) playSustainedSampleNote(track, midiNote, durSec, t, dest, velocity);
     else playSampleNote(track, midiNote, durSec, t, dest, velocity);
   } else {
@@ -1556,7 +1658,7 @@ function scheduleAhead() {
     const section = project.sections[secId];
     if (!section) { scheduleCursor += 1; continue; }
 
-    const secLenBeats = section.lengthBars * 4;
+    const secLenBeats = Math.max(1, section.lengthBars * 4);  // guard against 0-length sections (would infinite-loop)
     const beatInSec   = scheduleCursor - sectionBeatOffset;
 
     if (beatInSec >= secLenBeats) {
@@ -1983,14 +2085,12 @@ function renderTrackHeaders() {
     card.className = 'track-card' + (track.id === selectedTrackId ? ' selected' : '');
     card.dataset.trackId = track.id;
 
-    const instOpts = INSTRUMENTS.map(i =>
-      `<option value="${i.id}" ${i.id===track.instrument?'selected':''}>${i.label}</option>`
-    ).join('');
+    const instOpts = buildInstrumentOptions(track.instrument);
 
     card.innerHTML = `
       <div class="track-row1">
         <div class="track-color-swatch" style="background:${track.color}" title="Click to change color"></div>
-        <input class="track-name" type="text" value="${track.label}" maxlength="24" title="Track name">
+        <input class="track-name" type="text" value="${escapeHtml(track.label)}" maxlength="24" title="Track name">
         <button class="track-btn ${track.muted?'muted':''}" data-action="mute" title="Mute">M</button>
         <button class="track-btn ${track.soloed?'soloed':''}" data-action="solo" title="Solo">S</button>
         <button class="track-btn danger" data-action="del" title="Remove track">✕</button>
@@ -2010,7 +2110,7 @@ function renderTrackHeaders() {
       <div class="track-row3 sample-row">
         <button class="sample-load" data-action="sample" title="Load an MP3/WAV/OGG sample for this track. MIDI notes will pitch-shift this sample from the Root MIDI note.">Load MP3</button>
         <input type="file" class="sample-file-input" accept="audio/*,.mp3,.wav,.ogg,.m4a" style="display:none">
-        <span class="sample-name" title="Loaded sample file name. Audio files must be reloaded after a browser refresh.">${trackSampleName(track) || (track.instrument==='sample' ? 'sample not loaded' : '')}</span>
+        <span class="sample-name" title="Loaded sample file name. Audio files must be reloaded after a browser refresh.">${escapeHtml(trackSampleName(track) || (track.instrument==='sample' ? 'sample not loaded' : ''))}</span>
         <span title="Root MIDI: the MIDI note number the sample was originally recorded at. C4 = 60.">Root</span>
         <input type="number" class="sample-root" data-action="sample-root" min="21" max="108" step="1" value="${trackSampleRoot(track)}" title="Root MIDI note for the sample. Example: piano_C4.mp3 should use 60.">
         <button class="sample-load sample-sustain ${track.sample?.sustain||track.sample?.stretch?'on':''}" data-action="sample-sustain" title="Sustain: hold long MIDI notes by looping the sample's middle/tail at the correct pitch. More natural than time-stretching.">Sustain</button>
@@ -2079,7 +2179,9 @@ function renderTrackHeaders() {
     });
     card.querySelector('[data-action="inst"]').addEventListener('change', e => {
       track.instrument = e.target.value;
-      if (track.instrument === 'sample' && !sampleBuffers[track.id]) {
+      if (SAMPLE_INSTRUMENT_BY_ID[track.instrument]) {
+        ensureSampleInstrumentLoaded(track);
+      } else if (track.instrument === 'sample' && !sampleBuffers[track.id]) {
         setStatus(`Sample instrument selected for ${track.label} — click Load MP3 to choose a source sample`);
       }
       saveProject();
@@ -2150,6 +2252,7 @@ function renderTrackHeaders() {
 
     list.appendChild(card);
   });
+  ensureActiveSampleInstrumentsLoaded();
 }
 
 function addTrack() {
@@ -2815,6 +2918,14 @@ async function bounceWav() {
   const totalSecs  = totalBeats * 60 / bpm + 1.5; // 1.5s tail
 
   setStatus('Bouncing… this may take a moment');
+  // Make sure every built-in sample instrument used anywhere in the song is decoded first.
+  for (const secId of project.sectionOrder) {
+    for (const track of Object.values(project.sections[secId]?.tracks || {})) {
+      if (SAMPLE_INSTRUMENT_BY_ID[track.instrument] && !sampleBuffers[track.id]) {
+        await ensureSampleInstrumentLoaded(track);
+      }
+    }
+  }
   const AC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
   const oCtx = new AC(2, Math.ceil(totalSecs * 44100), 44100);
 
@@ -2995,6 +3106,8 @@ function loadDemo() {
   renderFxSnapshotUI();
   ensureSelectedTrack();
   if (audioCtx) rebuildEngines();
+  document.getElementById('bpm-input').value = project.tempo;
+  syncMasterStrip();
   renderTrackHeaders(); renderSectionUI();
   PR.scrollBeat = 0;
   // Scroll to note range (~MIDI 45-75)
