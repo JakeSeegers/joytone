@@ -55,7 +55,8 @@ html,body{height:100%;overflow:hidden;background:#111;color:#ccc;font:13px/1.4 '
 .el-btn{padding:2px 9px;font-size:11px;border:1px solid #444;border-radius:3px;background:#1e1e28;color:#ccc}
 .el-btn:hover{background:#26263a}
 .el-btn.active{background:#2d2d50;color:#fff;box-shadow:0 0 8px rgba(120,120,220,.4)}
-#btn-elemental-auto{padding:2px 9px;font-size:11px;margin-left:auto}
+#btn-add-drums{padding:2px 9px;font-size:11px;margin-left:auto}
+#btn-elemental-auto{padding:2px 9px;font-size:11px}
 #btn-elemental-auto.on{background:#3a2d5a;border-color:#8877cc;color:#e8e0ff}
 
 /* DAW main area */
@@ -349,6 +350,7 @@ input[type=range]{cursor:pointer}
   <div id="elemental-strip">
     <span class="lbl" title="Pick an element to load &amp; loop a random matching chord progression. All 35 clips share key A so any order sounds good.">Elemental:</span>
     <div id="elemental-buttons"><!-- filled by JS --></div>
+    <button id="btn-add-drums" title="Add the last loaded drums to the current sequence, keeping their previous mix/FX settings." disabled>🥁 Add Drums</button>
     <button id="btn-elemental-auto" title="Auto-shuffle: at each loop boundary, swap to another random clip from the current element filter.">🎲 Auto</button>
   </div>
 
@@ -2877,7 +2879,7 @@ function prepareImport(incomingTracks, targetSectionId) {
   for (const t of Object.values(simTracks))
     for (const n of t.notes) maxBeat = Math.max(maxBeat, n.beatStart + n.duration);
 
-  return { toDelete, toAdd, newLengthBars: Math.ceil(maxBeat / 4), sampleBufferTransfers };
+  return { toDelete, toAdd, newLengthBars: Math.ceil(maxBeat / 4), sampleBufferTransfers, incomingIsDrum };
 }
 
 // Apply a prepared import and refresh UI
@@ -2897,6 +2899,7 @@ function applyImport(prepared, targetSectionId) {
   if (!sec.tracks[selectedTrackId] && prepared.toAdd.length) selectedTrackId = prepared.toAdd[0].id;
   ensureSelectedTrack();
   if (audioCtx) rebuildEngines();
+  if (prepared.incomingIsDrum) captureLastDrums(sec);  // remember freshly-loaded drums
   renderTrackHeaders(); renderSectionUI();
   PR.gridDirty=true; PR.dirty=true; schedRedraw(); saveProject();
   const n = prepared.toAdd.length;
@@ -3721,6 +3724,7 @@ async function fetchElementalRoles(entry) {
 // Replace the active section's tracks with a freshly-built elemental arrangement.
 function applyElementalRoles(roles, entry) {
   const sec = project.sections[activeSectionId];
+  captureLastDrums(sec);  // remember any drums before they're replaced
   for (const id of Object.keys(sec.tracks)) {
     trackEngines[id]?.destroy(); delete trackEngines[id];
     delete sampleBuffers[id]; delete sec.tracks[id];
@@ -3802,6 +3806,56 @@ function updateElementalUI() {
   if (auto) auto.classList.toggle('on', elementalAuto);
 }
 
+// ── LAST DRUMS ─────────────────────────────────────────────────────
+// Remembers the most-recent drum tracks (with their mix/FX) so they can be
+// re-dropped onto a new sequence — e.g. after an elemental clip wipes the section.
+let lastDrums = null;  // [{ track:<clone>, buffer:<AudioBuffer|null> }]
+
+function isDrumTrack(t) {
+  if (['kick','snare','hat'].includes(t.instrument)) return true;
+  const def = SAMPLE_INSTRUMENT_BY_ID[t.instrument];
+  return !!def && (def.group === 'Kicks' || def.group === 'Percussion');
+}
+
+// Snapshot the drum tracks currently in a section, preserving their settings.
+function captureLastDrums(sec) {
+  if (!sec) return;
+  const drums = Object.values(sec.tracks).filter(isDrumTrack);
+  if (!drums.length) return;
+  lastDrums = drums.map(t => ({ track: cloneData(t), buffer: sampleBuffers[t.id] || null }));
+  updateAddDrumsButton();
+}
+
+// Re-add the remembered drums to the active section with their previous settings.
+// Replaces any drum tracks already present (so repeated presses don't stack).
+function addLastDrums() {
+  if (!lastDrums || !lastDrums.length) { setStatus('No drums loaded yet to add', true); return; }
+  pushUndo();
+  const sec = project.sections[activeSectionId];
+  for (const t of Object.values(sec.tracks)) {
+    if (isDrumTrack(t)) {
+      trackEngines[t.id]?.destroy(); delete trackEngines[t.id];
+      delete sampleBuffers[t.id]; delete sec.tracks[t.id];
+    }
+  }
+  for (const { track, buffer } of lastDrums) {
+    const nt = cloneData(track);
+    nt.id = uid();
+    nt.notes = (track.notes || []).map(n => ({ ...cloneData(n), id: uid() }));
+    sec.tracks[nt.id] = nt;
+    if (buffer) sampleBuffers[nt.id] = buffer;
+  }
+  if (audioCtx) rebuildEngines();
+  renderTrackHeaders(); renderSectionUI();
+  PR.gridDirty = true; PR.dirty = true; schedRedraw(); saveProject();
+  setStatus(`Added last drums (${lastDrums.length} track${lastDrums.length!==1?'s':''})`);
+}
+
+function updateAddDrumsButton() {
+  const btn = document.getElementById('btn-add-drums');
+  if (btn) btn.disabled = !(lastDrums && lastDrums.length);
+}
+
 // ── TRANSPORT WIRING ───────────────────────────────────────────────
 document.getElementById('btn-play').addEventListener('click', async () => {
   await ensureAudio();
@@ -3849,6 +3903,7 @@ document.getElementById('btn-add-track').addEventListener('click', async () => {
 document.getElementById('btn-add-section').addEventListener('click', addSection);
 document.getElementById('btn-dup-section').addEventListener('click', () => duplicateSection(activeSectionId));
 document.getElementById('btn-elemental-auto').addEventListener('click', toggleElementalAuto);
+document.getElementById('btn-add-drums').addEventListener('click', addLastDrums);
 
 // ── INIT ───────────────────────────────────────────────────────────
 function init() {
@@ -3866,6 +3921,7 @@ function init() {
   renderSectionUI();
   renderFxSnapshotUI();
   buildElementalUI();
+  updateAddDrumsButton();
 
   // Initial piano roll scroll — center on MIDI ~60-72 range
   window.addEventListener('resize', () => { PR.gridDirty=true; PR.dirty=true; schedRedraw(); });
