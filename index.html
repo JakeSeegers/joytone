@@ -298,6 +298,7 @@ input[type=range]{cursor:pointer}
     <div class="sep"></div>
     <button id="btn-library" title="Browse MIDI library">📚 Library</button>
     <button id="btn-gen-chords" title="Generate chord progression (cycles: walkdown → ii-V → deceptive → twist)">🎲 Chords</button>
+    <button id="btn-tile" title="Unflip tile — generate an elemental A-B-A-C track (click again to add 5 more sections)" style="font-weight:600">🎴 Unflip Tile</button>
     <button id="btn-load-demo" title="Load demo song">★ Demo</button>
     <button id="btn-reset" title="Clear saved state and start fresh" style="color:#f88">⊘ Reset</button>
   </div>
@@ -2892,6 +2893,220 @@ function generateMelodyNotes(chords, rootPc, mode='major') {
   return notes;
 }
 
+// ── ELEMENTAL TRACK GENERATOR ──────────────────────────────────────
+// Generates a complete 5-section A-B-A-C track themed to an element.
+// All instruments are programmatic — no external MIDI files required.
+
+const ELEMENTS = {
+  earth: {
+    emoji:'🌍', name:'Earth', color:'#6d4c41',
+    tempo:76, rootPc:2,   // D minor — heavy, grounded
+    sections:{ intro:'walkdown', A:'walkdown',   B:'iiV',       C:'twist'     },
+    drums:{
+      intro:{ vel:.48, hat:.12, xk:false },
+      A:    { vel:1.00, hat:.88, xk:false },
+      B:    { vel:.66, hat:.38, xk:false  },
+      C:    { vel:1.12, hat:1.0, xk:true  },
+    },
+    arp:'light',
+  },
+  water: {
+    emoji:'💧', name:'Water', color:'#0288d1',
+    tempo:94, rootPc:9,   // A minor / Dorian — fluid, flowing
+    sections:{ intro:'iiV',      A:'iiV',        B:'walkdown',  C:'deceptive' },
+    drums:{
+      intro:{ vel:.44, hat:.18, xk:false },
+      A:    { vel:.92, hat:1.0,  xk:false },
+      B:    { vel:.60, hat:.44, xk:false  },
+      C:    { vel:1.06, hat:1.0, xk:true  },
+    },
+    arp:'full',
+  },
+  fire: {
+    emoji:'🔥', name:'Fire',  color:'#c62828',
+    tempo:128, rootPc:4,  // E minor — intense, driving
+    sections:{ intro:'deceptive', A:'deceptive', B:'iiV',       C:'twist'     },
+    drums:{
+      intro:{ vel:.54, hat:.22, xk:false },
+      A:    { vel:1.10, hat:1.0, xk:false },
+      B:    { vel:.74, hat:.54, xk:false  },
+      C:    { vel:1.22, hat:1.0, xk:true  },
+    },
+    arp:'full',
+  },
+  wind: {
+    emoji:'💨', name:'Wind',  color:'#00838f',
+    tempo:106, rootPc:7,  // G — airy, light
+    sections:{ intro:'iiV',      A:'walkdown',   B:'deceptive', C:'twist'     },
+    drums:{
+      intro:{ vel:.38, hat:.08, xk:false },
+      A:    { vel:.84, hat:.68, xk:false  },
+      B:    { vel:.55, hat:.28, xk:false  },
+      C:    { vel:1.0,  hat:.88, xk:true  },
+    },
+    arp:'light',
+  },
+};
+
+function getDualElement() {
+  const keys = Object.keys(ELEMENTS);
+  const [a,b] = [...keys].sort(()=>Math.random()-.5).slice(0,2);
+  const ea=ELEMENTS[a], eb=ELEMENTS[b];
+  return {
+    emoji: ea.emoji+eb.emoji, name:`${ea.name} & ${eb.name}`, color:'#4a148c',
+    tempo: Math.round((ea.tempo+eb.tempo)/2),
+    rootPc: ea.rootPc,
+    sections:{ intro:ea.sections.intro, A:ea.sections.A, B:eb.sections.B, C:eb.sections.C },
+    drums:{    intro:ea.drums.intro,    A:ea.drums.A,    B:eb.drums.B,    C:eb.drums.C    },
+    arp: Math.random()<.5 ? ea.arp : eb.arp,
+  };
+}
+
+function pickRandomElement() {
+  const r = Math.random();
+  if (r < .20) return ELEMENTS.earth;
+  if (r < .40) return ELEMENTS.water;
+  if (r < .60) return ELEMENTS.fire;
+  if (r < .80) return ELEMENTS.wind;
+  return getDualElement();
+}
+
+// Programmatic kick / snare / hat notes for one section
+function generateDrumSection(mod, lengthBars) {
+  const kick=[], snare=[], hat=[];
+  for (let bar=0; bar<lengthBars; bar++) {
+    const bs = bar*4;
+    // Kick: 0 + 2 always, optional syncopated +2.5 in C sections
+    for (const b of (mod.xk ? [0,2,2.5] : [0,2]))
+      kick.push({ id:uid(), beatStart:bs+b, duration:.42, midiNote:36,
+        velocity: clamp(Math.round(100*mod.vel + Math.random()*8-4), 40, 127) });
+    // Snare: off-beats 1 + 3
+    for (const b of [1,3])
+      snare.push({ id:uid(), beatStart:bs+b, duration:.35, midiNote:38,
+        velocity: clamp(Math.round(90*mod.vel + Math.random()*6-3), 40, 127) });
+    // Hats: 8th-note grid, filtered by density
+    for (let h=0; h<8; h++) {
+      if (Math.random() > mod.hat) continue;
+      hat.push({ id:uid(), beatStart:bs+h*.5, duration:.18, midiNote:42,
+        velocity: clamp(Math.round((46+Math.random()*24)*mod.vel), 25, 127) });
+    }
+  }
+  return { kick, snare, hat };
+}
+
+// Build one complete section — chords/melody/bass + drums
+function buildElementalSection(elCfg, sectionType, lengthBars) {
+  const style    = elCfg.sections[sectionType] || 'walkdown';
+  const drumMod  = elCfg.drums[sectionType]    || elCfg.drums.A;
+  const full     = sectionType !== 'intro';
+
+  // Pre-compute kick positions so the bass line locks to them
+  const kickHits = [];
+  if (full) {
+    for (let bar=0; bar<lengthBars; bar++)
+      for (const b of (drumMod.xk ? [0,2,2.5] : [0,2]))
+        kickHits.push({ beatStart: bar*4+b });
+  }
+
+  // Chord / melody / bass tracks via existing generators
+  const rawTracks = generateHarmonicProgression(elCfg.rootPc, style);
+  const roles = expandChordRoles(rawTracks, {
+    arp:      full ? (elCfg.arp||'full') : 'off',
+    melody:   full,
+    bassLine: full,
+    kickHits,
+  });
+
+  const tracks = {};
+  if (roles) for (const t of roles) tracks[t.id] = t;
+
+  // Drum tracks
+  if (full) {
+    const {kick,snare,hat} = generateDrumSection(drumMod, lengthBars);
+    const DRUM_FX = inst => ({
+      ...DEFAULT_FX(),
+      filterType:'lowpass',
+      filterCutoff: inst==='hat'?7000 : inst==='snare'?2800 : 380,
+    });
+    const mkDrum = (label,inst,notes,vol,color) => {
+      const t = { id:uid(), label, instrument:inst, color, volume:vol,
+        muted:false, soloed:false, reverbSend:.02, notes, effects:DRUM_FX(inst) };
+      tracks[t.id] = t;
+    };
+    mkDrum('Kick',  'kick',  kick,  .88, '#ff8a65');
+    mkDrum('Snare', 'snare', snare, .76, '#a5d6a7');
+    mkDrum('Hat',   'hat',   hat,   .58, '#80deea');
+  }
+
+  return { lengthBars, tracks };
+}
+
+let _activeElement = null;
+let _tileGenCount  = 0;
+
+function generateElementalTrack() {
+  stopPlayback();
+
+  const isBlank = _tileGenCount === 0 ||
+    Object.values(project.sections).every(s => !Object.keys(s.tracks).length);
+
+  _activeElement = pickRandomElement();
+
+  if (isBlank) {
+    // ── First flip: build fresh 5-section project ──────────────────
+    _tileGenCount = 1;
+    project = makeProject();
+    project.tempo = _activeElement.tempo;
+
+    const DEFS = [
+      { id:'In', bars:4, type:'intro' },
+      { id:'A',  bars:8, type:'A'     },
+      { id:'B',  bars:8, type:'B'     },
+      { id:'A+', bars:8, type:'A'     },
+      { id:'C',  bars:8, type:'C'     },
+    ];
+    project.sectionOrder = DEFS.map(d=>d.id);
+    project.sections     = {};
+    for (const {id,bars,type} of DEFS)
+      project.sections[id] = buildElementalSection(_activeElement, type, bars);
+
+    activeSectionId = 'A';
+  } else {
+    // ── Subsequent flip: append another 5 sections ─────────────────
+    _tileGenCount++;
+    const n = _tileGenCount;
+    const DEFS = [
+      { id:`In${n}`, bars:4, type:'intro' },
+      { id:`A${n}`,  bars:8, type:'A'     },
+      { id:`B${n}`,  bars:8, type:'B'     },
+      { id:`A${n}+`, bars:8, type:'A'     },
+      { id:`C${n}`,  bars:8, type:'C'     },
+    ];
+    for (const {id,bars,type} of DEFS) {
+      project.sections[id] = buildElementalSection(_activeElement, type, bars);
+      project.sectionOrder.push(id);
+    }
+  }
+
+  // ── Refresh everything ─────────────────────────────────────────
+  document.getElementById('bpm-input').value = project.tempo;
+  if (audioCtx) rebuildEngines();
+  renderTrackHeaders(); renderSectionUI(); syncMasterStrip();
+  PR.scrollBeat=0; PR.gridDirty=true; PR.dirty=true; schedRedraw();
+  saveProject();
+
+  // Update button to show revealed element
+  const btn = document.getElementById('btn-tile');
+  btn.textContent = `${_activeElement.emoji} ${_activeElement.name}`;
+  btn.style.background = _activeElement.color;
+  btn.style.color = '#fff';
+  btn.style.borderColor = _activeElement.color;
+  btn.title = `${_activeElement.name} — click to add 5 more sections`;
+
+  const verb = _tileGenCount===1 ? 'Generated' : `+5 sections (×${_tileGenCount})`;
+  setStatus(`${_activeElement.emoji} ${verb}: ${_activeElement.name} · ${project.tempo} BPM`);
+}
+
 // ── HARMONIC PATTERN CHORD GENERATOR ──────────────────────────────
 // Generates chord progressions using four music-theory patterns.
 // Output is a fake "incomingTracks" object that feeds directly into
@@ -4002,6 +4217,7 @@ async function openLibrary() {
 }
 
 document.getElementById('btn-library').addEventListener('click', openLibrary);
+document.getElementById('btn-tile').addEventListener('click', generateElementalTrack);
 document.getElementById('btn-gen-chords').addEventListener('click', () => {
   const style = HARM_STYLES[harmStyleIdx % HARM_STYLES.length];
   const rootPc = detectSectionRootPc(activeSectionId);
@@ -4294,6 +4510,9 @@ document.getElementById('btn-reset').addEventListener('click', () => {
     renderSectionUI();
     syncMasterStrip();
     PR.scrollBeat=0; PR.gridDirty=true; PR.dirty=true; schedRedraw();
+    _tileGenCount = 0; _activeElement = null;
+    const tb = document.getElementById('btn-tile');
+    tb.textContent='🎴 Unflip Tile'; tb.style.background=''; tb.style.color=''; tb.style.borderColor='';
     setStatus('Reset — blank project');
   }
 });
