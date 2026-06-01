@@ -1325,37 +1325,39 @@ function playSampleNote(track, midiNote, dur, t, dest, velocity=100) {
   src.stop(t + dur + rel + 0.03);
 }
 
-// Build a version of the buffer where the loop region has a baked-in crossfade,
-// so AudioBufferSourceNode.loop has a seamless jump back to loopStart each cycle.
-function makeXfadeLoopBuffer(orig, loopStart, loopEnd, ctx, xfadeSec = 0.04) {
-  const sr = orig.sampleRate;
-  const ch = orig.numberOfChannels;
-  const loopS = Math.floor(loopStart * sr);
-  const loopE = Math.floor(loopEnd * sr);
-  const loopLen = loopE - loopS;
-  const xfN = Math.min(Math.floor(xfadeSec * sr), Math.floor(loopLen * 0.45));
-  if (xfN < 4) return orig; // loop too short to crossfade
-
-  const out = ctx.createBuffer(ch, orig.length, sr);
-  for (let c = 0; c < ch; c++) {
-    const src = orig.getChannelData(c);
-    const dst = out.getChannelData(c);
-    dst.set(src); // start as a full copy
-
-    // Blend the tail of the loop into the head of the loop.
-    // At sample loopE-xfN+i: fade out original, fade in loopStart+i
-    for (let i = 0; i < xfN; i++) {
-      const fadeIn  = i / xfN;        // 0 → 1
-      const fadeOut = 1 - fadeIn;
-      const tailIdx  = loopE - xfN + i;
-      const headIdx  = loopS + i;
-      if (tailIdx >= 0 && tailIdx < orig.length &&
-          headIdx >= 0 && headIdx < orig.length) {
-        dst[tailIdx] = src[tailIdx] * fadeOut + src[headIdx] * fadeIn;
-      }
-    }
+// Find the nearest rising zero-crossing in audio data from a start sample.
+// direction: +1 = search forward, -1 = search backward.
+// Returns the found sample index, or startSample if none found within maxSamples.
+function nearestZeroCross(data, startSample, direction, maxSamples) {
+  for (let i = 0; i <= maxSamples; i++) {
+    const idx = Math.round(startSample + direction * i);
+    if (idx <= 0 || idx >= data.length - 1) break;
+    if (data[idx] <= 0 && data[idx + 1] > 0) return idx; // rising zero crossing
   }
-  return out;
+  return startSample;
+}
+
+// Snap loopStart forward and loopEnd backward to nearest zero crossings.
+// Cached per track so the scan only runs once per sample load.
+function snapLoopPoints(buffer, trackId, loopStart, loopEnd) {
+  const cacheKey = `${loopStart.toFixed(4)}:${loopEnd.toFixed(4)}`;
+  const cached   = xfadeBuffers[trackId];
+  if (cached?.key === cacheKey) return cached;
+
+  const sr       = buffer.sampleRate;
+  const ch0      = buffer.getChannelData(0);
+  const maxScan  = Math.floor(0.025 * sr); // search up to 25 ms
+  const minGap   = 0.04;
+
+  const snapS = nearestZeroCross(ch0, Math.floor(loopStart * sr), +1, maxScan) / sr;
+  const snapE = nearestZeroCross(ch0, Math.floor(loopEnd   * sr), -1, maxScan) / sr;
+
+  const result = (snapE > snapS + minGap)
+    ? { key: cacheKey, loopStart: snapS, loopEnd: snapE }
+    : { key: cacheKey, loopStart, loopEnd }; // fallback if snap collapsed the region
+
+  xfadeBuffers[trackId] = result;
+  return result;
 }
 
 function playSustainedSampleNote(track, midiNote, dur, t, dest, velocity=100) {
@@ -1372,28 +1374,19 @@ function playSustainedSampleNote(track, midiNote, dur, t, dest, velocity=100) {
     return playSampleNote(track, midiNote, dur, t, dest, velocity);
   }
 
-  // Sustain loop: preserve pitch, repeat a stable middle/tail section until note release.
-  // This avoids the fun-house artifacts of granular time-stretching. Loop points are automatic for now.
+  // Compute nominal loop region (35 %–85 % of buffer), then snap both boundaries
+  // to the nearest rising zero-crossings so the jump back is amplitude-continuous.
   const minLoop = Math.min(0.08, buffer.duration * 0.25);
-  let loopStart = track.sample?.loopStart ?? Math.max(0.02, buffer.duration * 0.35);
-  let loopEnd   = track.sample?.loopEnd   ?? Math.max(loopStart + minLoop, buffer.duration * 0.85);
-  loopStart = clamp(loopStart, 0, Math.max(0, buffer.duration - minLoop));
-  loopEnd   = clamp(loopEnd, loopStart + minLoop, buffer.duration);
-
-  // Use a crossfade-baked buffer so the loop jump is seamless (no click).
-  // Cache by track id + loop points so we only bake once per sample/setting.
-  const cacheKey = `${loopStart.toFixed(4)}:${loopEnd.toFixed(4)}`;
-  const cached   = xfadeBuffers[track.id];
-  const loopBuf  = (cached?.key === cacheKey)
-    ? cached.buf
-    : (() => {
-        const b = makeXfadeLoopBuffer(buffer, loopStart, loopEnd, ctx);
-        xfadeBuffers[track.id] = { key: cacheKey, buf: b };
-        return b;
-      })();
+  const nomStart = track.sample?.loopStart ?? Math.max(0.02, buffer.duration * 0.35);
+  const nomEnd   = track.sample?.loopEnd   ?? Math.max(nomStart + minLoop, buffer.duration * 0.85);
+  const { loopStart, loopEnd } = snapLoopPoints(
+    buffer, track.id,
+    clamp(nomStart, 0, Math.max(0, buffer.duration - minLoop)),
+    clamp(nomEnd,   minLoop, buffer.duration)
+  );
 
   const src = ctx.createBufferSource();
-  src.buffer = loopBuf;
+  src.buffer = buffer; // original buffer — no modification needed
   src.playbackRate.setValueAtTime(rate, t);
   src.loop = true;
   src.loopStart = loopStart;
