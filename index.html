@@ -2892,112 +2892,98 @@ function generateMelodyNotes(chords, rootPc, mode='major') {
 }
 
 // ── GROOVE BASSLINE GENERATOR ──────────────────────────────────────
-// Replaces the old "one long note per chord" bass with a rhythmic line
-// that locks to kick hits when the section already has a drum track.
-//
-// kickHits: array of { beatStart } objects from the kick track (may be empty).
-// If empty, falls back to a simple repeating quarter-note groove pattern.
+// Fixed rhythmic patterns instead of random note picking.
+// Each entry: { b: beat-offset 0–3, r: role }
+// Roles: 'root' | 'fifth' | 'octave' | 'approach' | 'rest'
+// One pattern is chosen per section and repeated across all chords.
 
-function generateBasslineNotes(chords, rootPc, mode='major', kickHits=[]) {
-  const LO=33, HI=52; // A1–E3: classic bass guitar range
-  const scale = melScalePool(rootPc, mode, LO-2, HI+2);
+const BASS_GROOVES = [
+  // A — walking 4/4: root fifth root approach
+  [{b:0,r:'root'},{b:1,r:'fifth'},{b:2,r:'root'},{b:3,r:'approach'}],
+  // B — half-note groove: root (held) then fifth (held)
+  [{b:0,r:'root'},{b:2,r:'fifth'}],
+  // C — root + tail: root, rest, fifth, approach
+  [{b:0,r:'root'},{b:2,r:'fifth'},{b:3,r:'approach'}],
+  // D — octave bounce: root octave root approach
+  [{b:0,r:'root'},{b:1,r:'octave'},{b:2,r:'root'},{b:3,r:'approach'}],
+  // E — syncopated 8ths: root on 1, push on 2.5, root on 3, approach on 3.5
+  [{b:0,r:'root'},{b:1.5,r:'fifth'},{b:2,r:'root'},{b:3.5,r:'approach'}],
+];
 
-  // Find best in-range MIDI for a pitch class, staying close to prev
-  function inRange(pc, prev) {
+function generateBasslineNotes(chords, rootPc, mode='major') {
+  const LO=33, HI=52; // A1–E3
+
+  function inRange(pc, prevNote) {
     let best=LO, bd=999;
     for (let m=LO; m<=HI; m++) {
-      if (((m%12)+12)%12===pc) { const d=Math.abs(m-prev); if(d<bd){bd=d;best=m;} }
+      if (((m%12)+12)%12===pc) { const d=Math.abs(m-prevNote); if(d<bd){bd=d;best=m;} }
     }
     return best;
   }
 
-  // Fallback groove patterns (beat offsets within a 4-beat chord)
-  const FALLBACK_PATS = [
-    [0,2],               // half-note 2-feel
-    [0,1,2,3],           // walking quarters
-    [0,2,2.5,3],         // boom + 8th tail
-    [0,1,2,2.5],         // active 4
-  ];
-  let patCell = 0;
+  const scale = melScalePool(rootPc, mode, LO-2, HI+2);
+  const notes = [];
+  const firstPc = ((chords[0][0].midiNote%12)+12)%12;
+  let prev = inRange(firstPc, 40);
 
-  const notes=[];
-  const firstChordRootPc = ((chords[0][0].midiNote%12)+12)%12;
-  let prev = inRange(firstChordRootPc, 40);
-
-  // Quantize kick hits to 16th-note grid (0.25-beat resolution)
-  const kickQ = [...new Set(kickHits.map(h=>Math.round(h.beatStart*4)/4))].sort((a,b)=>a-b);
-  const hasKick = kickQ.length > 0;
+  // Pick one groove for the whole section — consistent, not re-rolled per chord
+  const groove = BASS_GROOVES[Math.floor(Math.random() * BASS_GROOVES.length)];
 
   for (let ci=0; ci<chords.length; ci++) {
-    const chord   = chords[ci];
-    const cStart  = chord[0].beatStart;
-    const cLen    = ci<chords.length-1
+    const chord  = chords[ci];
+    const cStart = chord[0].beatStart;
+    const cLen   = ci<chords.length-1
       ? chords[ci+1][0].beatStart - cStart
       : Math.max(chord[0].duration, 2);
-    const cEnd    = cStart + cLen;
 
     const chordRootPc = ((chord[0].midiNote%12)+12)%12;
-    const root        = inRange(chordRootPc, prev);
-    const fifthPc     = (chordRootPc+7)%12;
-    const fifth       = inRange(fifthPc, root);
+    const root   = inRange(chordRootPc, prev);
+    const fifth  = inRange((chordRootPc+7)%12, root);
+    const octave = root+12<=HI ? root+12 : root; // octave up, or same if too high
 
-    // Beat positions: kick hits within this chord, or fallback pattern
-    let offsets;
-    if (hasKick) {
-      offsets = kickQ.filter(b=>b>=cStart && b<cEnd).map(b=>b-cStart);
-      if (!offsets.length || offsets[0]>0.25) offsets.unshift(0); // always anchor beat 1
-    } else {
-      const pat = FALLBACK_PATS[patCell % FALLBACK_PATS.length];
-      const bs  = cLen/4;
-      offsets = pat.map(p=>p*bs);
-      if (ci>0 && ci%4===0) patCell++; // change cell every 4 chords
-    }
-
-    // Next chord root for lead-in approach
+    // Approach: semitone below next chord root (or scale tone if not in scale)
     const nextRootPc = ci<chords.length-1
       ? ((chords[ci+1][0].midiNote%12)+12)%12
       : chordRootPc;
     const nextRoot = inRange(nextRootPc, root);
+    const approachBelow = nextRoot-1 >= LO ? nextRoot-1 : nextRoot+1;
+    // Prefer diatonic approach if available one step away
+    const diaApproach = scale.find(n=>n>=LO&&n<=HI&&(n===nextRoot-2||n===nextRoot-1));
+    const approach = diaApproach ?? approachBelow;
 
-    for (let pi=0; pi<offsets.length; pi++) {
-      const off  = offsets[pi];
-      const beat = (off/(cLen/4));    // 0–4 position within chord
-      const strong = beat<0.5 || (beat>=2&&beat<2.5);
-      const isLast = pi===offsets.length-1 && ci<chords.length-1;
+    const noteMap = { root, fifth, octave, approach };
 
-      let note;
-      if (isLast) {
-        // Chromatic or scale approach to next chord root (semitone above or below)
-        const above = scale.find(n=>n===nextRoot+1||n===nextRoot+2);
-        const below = scale.find(n=>n===nextRoot-1||n===nextRoot-2);
-        note = (above&&Math.abs(above-prev)<=Math.abs((below||999)-prev)) ? above : (below||root);
-      } else if (strong) {
-        // Strong beat: root (most), fifth, or octave above root for variety
-        const r2 = (root+12<=HI) ? root+12 : root; // octave
-        note = Math.random()<0.60 ? root : (Math.random()<0.65 ? fifth : r2);
-      } else {
-        // Passing tone: stepwise motion — explicitly exclude prev to force movement
-        const cands = scale.filter(n=>n>=LO&&n<=HI&&n!==prev);
-        if (cands.length) {
-          // Prefer 1–3 semitone steps; avoid big jumps
-          const step = cands.filter(n=>Math.abs(n-prev)<=3);
-          const pool = step.length ? step : cands;
-          note = pool.reduce((b,n)=>Math.abs(n-prev)<Math.abs(b-prev)?n:b, pool[0]);
-        } else {
-          note = root;
-        }
+    // Repeat groove to fill cLen beats (groove is defined over 4 beats)
+    const hits = [];
+    for (let rep=0; rep*4 < cLen-0.05; rep++) {
+      for (const {b,r} of groove) {
+        const off = rep*4 + b;
+        if (off < cLen-0.05) hits.push({ off, r });
       }
+    }
 
-      // Duration: to next hit or chord end
-      const nextOff = pi<offsets.length-1 ? offsets[pi+1] : cLen;
-      const dur     = Math.max(0.12, (nextOff-off)*0.88);
+    // Force last hit in chord to approach (only if there's a next chord)
+    if (hits.length && ci < chords.length-1)
+      hits[hits.length-1] = { ...hits[hits.length-1], r:'approach' };
+
+    for (let hi=0; hi<hits.length; hi++) {
+      const {off, r} = hits[hi];
+      if (r==='rest') continue;
+
+      const note = noteMap[r] ?? root;
+
+      // Duration: extend through any following rests to next sounding hit or chord end
+      let durEnd = hi+1;
+      while (durEnd<hits.length && hits[durEnd].r==='rest') durEnd++;
+      const endOff = durEnd<hits.length ? hits[durEnd].off : cLen;
+      const dur = Math.max(0.15, (endOff-off)*0.87);
 
       notes.push({
-        id:uid(), beatStart:cStart+off, duration:dur,
-        midiNote:note,
-        velocity: strong ? 88+Math.floor(Math.random()*18) : 68+Math.floor(Math.random()*16)
+        id:uid(), beatStart:cStart+off, duration:dur, midiNote:note,
+        velocity: (r==='root'||r==='octave') ? 88+Math.floor(Math.random()*16)
+                                             : 70+Math.floor(Math.random()*14)
       });
-      prev=note;
+      prev = note;
     }
   }
   return notes;
@@ -3042,7 +3028,7 @@ function expandChordRoles(incomingTracks, opts={}) {
   // Bass line — rhythmic groove that locks to kick hits when available.
   const bassRootPc   = detectKeyPc(chords);
   const bassLineNotes = o.bassLine
-    ? generateBasslineNotes(chords, bassRootPc, 'major', o.kickHits)
+    ? generateBasslineNotes(chords, bassRootPc, 'major')
     : [];
 
   // Arpeggio — cycling chord tones; 'light' = 8ths, 'full' = 16ths, 'off' = none.
