@@ -2972,11 +2972,20 @@ function generateBasslineNotes(chords, rootPc, mode='major', kickHits=[]) {
         const below = scale.find(n=>n===nextRoot-1||n===nextRoot-2);
         note = (above&&Math.abs(above-prev)<=Math.abs((below||999)-prev)) ? above : (below||root);
       } else if (strong) {
-        note = Math.random()<0.72 ? root : fifth;
+        // Strong beat: root (most), fifth, or octave above root for variety
+        const r2 = (root+12<=HI) ? root+12 : root; // octave
+        note = Math.random()<0.60 ? root : (Math.random()<0.65 ? fifth : r2);
       } else {
-        // Passing tone: scale note closest to prev
-        const cands = scale.filter(n=>n>=LO&&n<=HI);
-        note = cands.reduce((b,n)=>Math.abs(n-prev)<Math.abs(b-prev)?n:b, root);
+        // Passing tone: stepwise motion — explicitly exclude prev to force movement
+        const cands = scale.filter(n=>n>=LO&&n<=HI&&n!==prev);
+        if (cands.length) {
+          // Prefer 1–3 semitone steps; avoid big jumps
+          const step = cands.filter(n=>Math.abs(n-prev)<=3);
+          const pool = step.length ? step : cands;
+          note = pool.reduce((b,n)=>Math.abs(n-prev)<Math.abs(b-prev)?n:b, pool[0]);
+        } else {
+          note = root;
+        }
       }
 
       // Duration: to next hit or chord end
@@ -3000,10 +3009,11 @@ function generateBasslineNotes(chords, rootPc, mode='major', kickHits=[]) {
 function expandChordRoles(incomingTracks, opts={}) {
   const o = {
     chordInst:'organ', chordVol:0.7, chordReverb:0.35, chordColor:'#ffb74d', chordFx:{ filterCutoff:1200 },
-    bass:true,   bassInst:'bass',  bassVol:0.75, bassReverb:0.08, bassColor:'#81c784',
-    arp:'full',  arpInst:'pluck',  arpVol:0.45,  arpReverb:0.05,  arpColor:'#ff6b6b',
-    melody:true, melodyInst:'bell', melodyVol:0.52, melodyReverb:0.28, melodyColor:'#ce93d8',
-    kickHits: [],  // { beatStart } array from the section's kick track — locks bass rhythm to kick
+    bass:true,     bassInst:'bass',    bassVol:0.6,  bassReverb:0.06,  bassColor:'#4db6ac',
+    bassLine:true, bassLineInst:'bass', bassLineVol:0.72, bassLineReverb:0.08, bassLineColor:'#81c784',
+    arp:'full',    arpInst:'pluck',    arpVol:0.40,  arpReverb:0.05,   arpColor:'#ff6b6b',
+    melody:true,   melodyInst:'bell',  melodyVol:0.52, melodyReverb:0.28, melodyColor:'#ce93d8',
+    kickHits: [],  // { beatStart } array from kick track — locks bass line rhythm to kick
     ...opts
   };
 
@@ -3018,9 +3028,20 @@ function expandChordRoles(incomingTracks, opts={}) {
   // Chord voicing — kept exactly as authored in the source MIDI.
   const chordNotes = allNotes.map(n => ({...n, id:uid()}));
 
-  // Bass — groove line that locks to kick hits when available.
-  const bassRootPc = detectKeyPc(chords);
-  const bassNotes  = o.bass
+  // Bass drone — one long held note per chord (original simple bass).
+  const bassNotes = o.bass ? chords.map((chord, i) => {
+    const lowest  = chord.reduce((m,n) => n.midiNote < m.midiNote ? n : m, chord[0]);
+    const nextBeat = i < chords.length-1 ? chords[i+1][0].beatStart
+                                         : lowest.beatStart + lowest.duration;
+    return { id:uid(), beatStart:lowest.beatStart,
+      duration:Math.max(nextBeat - lowest.beatStart, 0.5),
+      midiNote:tameBassMidi(lowest.midiNote),
+      velocity:Math.min((lowest.velocity||80)+10, 120) };
+  }) : [];
+
+  // Bass line — rhythmic groove that locks to kick hits when available.
+  const bassRootPc   = detectKeyPc(chords);
+  const bassLineNotes = o.bassLine
     ? generateBasslineNotes(chords, bassRootPc, 'major', o.kickHits)
     : [];
 
@@ -3063,10 +3084,11 @@ function expandChordRoles(incomingTracks, opts={}) {
     melodyNotes.push(...generateMelodyNotes(chords, rootPc));
   }
 
-  const out = [ mkTrack('Chords', o.chordInst, chordNotes, o.chordColor, o.chordVol, o.chordReverb, o.chordFx||{}) ];
-  if (o.bass && bassNotes.length)  out.push(mkTrack('Bass',     o.bassInst,   bassNotes,   o.bassColor,   o.bassVol,   o.bassReverb));
-  if (arpNotes.length)             out.push(mkTrack('Arpeggio', o.arpInst,    arpNotes,    o.arpColor,    o.arpVol,    o.arpReverb));
-  if (melodyNotes.length)          out.push(mkTrack('Melody',   o.melodyInst, melodyNotes, o.melodyColor, o.melodyVol, o.melodyReverb));
+  const out = [ mkTrack('Chords',    o.chordInst,    chordNotes,    o.chordColor,    o.chordVol,    o.chordReverb,    o.chordFx||{}) ];
+  if (o.bass     && bassNotes.length)     out.push(mkTrack('Bass Drone', o.bassInst,     bassNotes,     o.bassColor,     o.bassVol,     o.bassReverb));
+  if (o.bassLine && bassLineNotes.length) out.push(mkTrack('Bass Line',  o.bassLineInst, bassLineNotes, o.bassLineColor, o.bassLineVol, o.bassLineReverb));
+  if (arpNotes.length)                    out.push(mkTrack('Arpeggio',   o.arpInst,      arpNotes,      o.arpColor,      o.arpVol,      o.arpReverb));
+  if (melodyNotes.length)                 out.push(mkTrack('Melody',     o.melodyInst,   melodyNotes,   o.melodyColor,   o.melodyVol,   o.melodyReverb));
   return out;
 }
 
@@ -3120,11 +3142,19 @@ function prepareImport(incomingTracks, targetSectionId) {
 
   let toAdd = [];
   if (!incomingIsDrum) {
-    // Collect kick hits from any existing kick tracks in this section so the
-    // bass generator can lock its rhythm to the drum groove.
+    // Collect kick hits from any existing kick tracks, unwrapping the drum loop
+    // to fill the full section so every chord bar has kick data to lock to.
     const kickHits = [];
+    const secLen = sec.lengthBars * 4;
     for (const t of Object.values(sec.tracks)) {
-      if (t.instrument === 'kick') kickHits.push(...t.notes);
+      if (t.instrument !== 'kick' || !t.notes.length) continue;
+      let rawLen = 0;
+      for (const n of t.notes) rawLen = Math.max(rawLen, n.beatStart + n.duration);
+      const loopLen = Math.max(4, Math.ceil(rawLen / 4) * 4);
+      const repeats = Math.ceil(Math.max(secLen, 8) / loopLen);
+      for (let rep = 0; rep < repeats; rep++)
+        for (const n of t.notes)
+          kickHits.push({ beatStart: n.beatStart + rep * loopLen });
     }
     const roles = expandChordRoles(incomingTracks, { kickHits });
     if (roles) toAdd = roles.map(restore);
