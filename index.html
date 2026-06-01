@@ -2897,6 +2897,46 @@ function generateMelodyNotes(chords, rootPc, mode='major') {
 // Generates a complete 5-section A-B-A-C track themed to an element.
 // All instruments are programmatic — no external MIDI files required.
 
+// FX / instrument defaults for each generated track label, extracted from
+// the saved FX state bank (Untitled-fx-states.json). Applied in buildElementalSection.
+const TILE_TRACK_FX = {
+  'Chords': {
+    instrument:'smp_softorgan', volume:0.22, reverbSend:0.35,
+    sample:{ name:'Soft Organ', url:'mp3/Single_long_soft_org_%233-1779982642422.mp3',
+             rootMidi:71, instrumentId:'smp_softorgan', builtin:true, sustain:true, stretch:false },
+    fx:{ filterType:'lowpass', filterCutoff:1200, filterRes:1.8,
+         delayMix:0.32, delaySync:'1/8D',
+         lfoDepth:0.81, lfoRate:5.2,
+         distDrive:0.06, distMix:0.37 }
+  },
+  'Bass Drone': {
+    instrument:'bass', volume:0.6, reverbSend:0.06,
+    fx:{ filterType:'lowpass', filterCutoff:600, filterRes:0.7 }
+  },
+  'Bass Line': {
+    instrument:'smp_guitar', volume:0.72, reverbSend:0.08,
+    sample:{ name:'Soft Guitar', url:'mp3/Deep_soft%2Cguitar_key_%234-1780181682186.mp3',
+             rootMidi:44, instrumentId:'smp_guitar', builtin:true, sustain:true, stretch:false },
+    fx:{ filterType:'lowpass', filterCutoff:600, filterRes:0.7,
+         delayMix:0.23, delayTime:0.54, delaySync:'1/8',
+         lfoDepth:0.24, lfoRate:4.3,
+         distDrive:0.18, distMix:0.15 }
+  },
+  'Arpeggio': {
+    instrument:'pluck', volume:0.40, reverbSend:0.05,
+    fx:{ filterType:'bandpass', filterCutoff:1500, filterRes:0.5 }
+  },
+  'Melody': {
+    instrument:'smp_synth', volume:0.50, reverbSend:0.28,
+    sample:{ name:'Soft Synth', url:'mp3/Deep_soft%2Csynth_key__%233-1780181711331.mp3',
+             rootMidi:36, instrumentId:'smp_synth', builtin:true, sustain:false, stretch:false },
+    fx:{ filterType:'lowpass', filterCutoff:1500, filterRes:0.5,
+         delayMix:0.12, delayTime:0.38, delaySync:'1/8D',
+         lfoDepth:0.13, lfoRate:5.7,
+         distDrive:0.71, distMix:0.44 }
+  },
+};
+
 const ELEMENTS = {
   earth: {
     emoji:'🌍', name:'Earth', color:'#6d4c41',
@@ -3036,6 +3076,17 @@ function buildElementalSection(elCfg, sectionType, lengthBars) {
     mkDrum('Kick',  'kick',  kick,  .88, '#ff8a65');
     mkDrum('Snare', 'snare', snare, .76, '#a5d6a7');
     mkDrum('Hat',   'hat',   hat,   .58, '#80deea');
+  }
+
+  // Apply the saved FX preset per track label
+  for (const t of Object.values(tracks)) {
+    const preset = TILE_TRACK_FX[t.label];
+    if (!preset) continue;
+    t.instrument  = preset.instrument;
+    t.volume      = preset.volume;
+    t.reverbSend  = preset.reverbSend;
+    t.effects     = { ...DEFAULT_FX(), ...preset.fx };
+    if (preset.sample) t.sample = { ...preset.sample };
   }
 
   return { lengthBars, tracks };
