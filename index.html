@@ -326,7 +326,7 @@ input[type=range]{cursor:pointer}
       <span class="mc-val" id="mc-hiss-val">low</span>
     </div>
     <div class="sep"></div>
-    <div class="mc-group" title="Bit depth — 16=off, lower=more crunchy">
+    <div class="mc-group" title="Bit depth — 16=clean, 8=SNES, 4=heavy crunch (turn up DEREZ to hear it)">
       <label style="color:#ff9a6c">BITS</label>
       <input type="range" id="mc-derez-bits" min="1" max="16" step="1" value="16">
       <span class="mc-val" id="mc-derez-bits-val">16</span>
@@ -895,7 +895,7 @@ async function ensureAudio() {
 
     derezCrusher = audioCtx.createWaveShaper();
     derezCrusher.curve = buildBitCrushCurve(bits);
-    derezCrusher.oversample = '4x'; // smoother quantisation steps
+    derezCrusher.oversample = 'none'; // keep hard quantisation steps — that IS the chiptune crunch
 
     derezFilter = audioCtx.createBiquadFilter();
     derezFilter.type = 'lowpass';
