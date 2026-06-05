@@ -3139,6 +3139,54 @@ const ELEMENTS = {
     },
     arp:'light',
   },
+  void: {
+    emoji:'🌌', name:'Void',  color:'#311b92',
+    tempo:62, rootPc:11,  // B — bottomless, foreboding
+    sections:{ intro:'twist',     A:'twist',      B:'deceptive', C:'twist'     },
+    drums:{
+      intro:{ vel:.22, hat:.04, xk:false },
+      A:    { vel:.40, hat:.10, xk:false },
+      B:    { vel:.30, hat:.06, xk:false },
+      C:    { vel:.58, hat:.22, xk:true  },
+    },
+    arp:'off',
+    // Sub-bass resonance + long reverse-style reverb/delay tails — empty, alien.
+    voices:{
+      'Chords':     { instrument:'synth', volume:0.16, reverbSend:0.66,
+                      fx:{ filterType:'lowpass', filterCutoff:780, filterRes:1.4,
+                           delayMix:0.50, delaySync:'1/2', lfoDepth:0.50, lfoRate:0.4 } },
+      'Bass Drone': { instrument:'bass',  volume:0.78, reverbSend:0.30,
+                      fx:{ filterType:'lowpass', filterCutoff:200, filterRes:0.4 } },
+      'Bass Line':  { instrument:'bass',  volume:0.70, reverbSend:0.28,
+                      fx:{ filterType:'lowpass', filterCutoff:240, filterRes:0.5 } },
+      'Melody':     { instrument:'synth', volume:0.28, reverbSend:0.70,
+                      fx:{ filterType:'lowpass', filterCutoff:1000, filterRes:0.8,
+                           delayMix:0.45, delaySync:'1/4', lfoDepth:0.20, lfoRate:0.3 } },
+    },
+  },
+  catacomb: {
+    emoji:'⚰️', name:'Catacomb', color:'#4e342e',
+    tempo:100, rootPc:9,  // A minor — labyrinthine, tense, structural
+    sections:{ intro:'deceptive', A:'twist',      B:'deceptive', C:'twist'     },
+    drums:{
+      intro:{ vel:.40, hat:.14, xk:false },
+      A:    { vel:.82, hat:.52, xk:false },
+      B:    { vel:.58, hat:.30, xk:false },
+      C:    { vel:1.04, hat:.86, xk:true  },
+    },
+    arp:'light',
+    // Dissonant choir clusters (church organ) + prepared-piano stabs.
+    // smp_* voices omit a sample object so the engine auto-detects their root.
+    voices:{
+      'Chords':    { instrument:'smp_church', volume:0.30, reverbSend:0.50,
+                     fx:{ filterType:'lowpass', filterCutoff:2400, filterRes:2.4,
+                          lfoDepth:0.15, lfoRate:0.8 } },
+      'Bass Line': { instrument:'smp_piano',  volume:0.60, reverbSend:0.12,
+                     fx:{ filterType:'lowpass', filterCutoff:900, filterRes:1.0 } },
+      'Melody':    { instrument:'smp_piano',  volume:0.42, reverbSend:0.22,
+                     fx:{ filterType:'lowpass', filterCutoff:2600, filterRes:1.6 } },
+    },
+  },
   chip: {
     emoji:'👾', name:'Chip',  color:'#1a237e',
     tempo:140, rootPc:4,  // E minor — fast, arcade
@@ -3170,11 +3218,15 @@ function getDualElement() {
 
 function pickRandomElement() {
   const r = Math.random();
-  if (r < .17) return ELEMENTS.earth;
-  if (r < .34) return ELEMENTS.water;
-  if (r < .51) return ELEMENTS.fire;
-  if (r < .68) return ELEMENTS.wind;
-  if (r < .85) return ELEMENTS.chip;
+  // The six canonical Godaigo elements, then a small chance of a chip flourish
+  // or a two-element blend so no two boards sound alike.
+  if (r < .14) return ELEMENTS.earth;
+  if (r < .28) return ELEMENTS.water;
+  if (r < .42) return ELEMENTS.fire;
+  if (r < .56) return ELEMENTS.wind;
+  if (r < .70) return ELEMENTS.void;
+  if (r < .84) return ELEMENTS.catacomb;
+  if (r < .92) return ELEMENTS.chip;
   return getDualElement();
 }
 
@@ -3273,13 +3325,23 @@ function buildElementalSection(elCfg, sectionType, lengthBars) {
         t.sample     = null;
       }
     } else {
-      const preset = TILE_TRACK_FX[t.label];
-      if (!preset) continue;
-      t.instrument  = preset.instrument;
-      t.volume      = preset.volume;
-      t.reverbSend  = preset.reverbSend;
-      t.effects     = { ...DEFAULT_FX(), ...preset.fx };
-      if (preset.sample) t.sample = { ...preset.sample };
+      // Base FX preset per track label, optionally overridden by a per-element
+      // voice so each element can own a distinct timbre (Void sub-bass, Catacomb
+      // choir/piano, etc). Element voices win; their fx are layered over the base.
+      const preset   = TILE_TRACK_FX[t.label];
+      const override = elCfg.voices && elCfg.voices[t.label];
+      if (!preset && !override) continue;
+      const merged = {
+        ...preset,
+        ...override,
+        fx: { ...(preset && preset.fx), ...(override && override.fx) },
+      };
+      t.instrument  = merged.instrument;
+      t.volume      = merged.volume ?? t.volume;
+      t.reverbSend  = merged.reverbSend ?? t.reverbSend;
+      t.effects     = { ...DEFAULT_FX(), ...merged.fx };
+      if (merged.sample)                        t.sample = { ...merged.sample };
+      else if (override && override.instrument) t.sample = null; // smp_* auto-detects its root
     }
   }
 
@@ -4648,16 +4710,24 @@ const ELEMENTAL_CHORDS = [
   { e:["Fire","Wind"], p:"midi/chords/Major/A - I IV V - Joyful Excited.mid", n:"Fire·Wind · I IV V" },
   { e:["Fire","Void"], p:"midi/chords/Minor/A - i ii v i - Mysterious Triumphant.mid", n:"Fire·Void · i ii v i" },
   { e:["Wind","Void"], p:"midi/chords/Modal/A - I vi bVIM V - New Surprised Mysterious.mid", n:"Wind·Void · I vi bVIM V" },
+  { e:["Catacomb"], p:"midi/chords/Minor/A - i i iv iv v7 ii5 v v7 - Dark Mysterious.mid", n:"Catacomb · i iv v7 ii v7" },
+  { e:["Catacomb"], p:"midi/chords/Minor/A - i vdim iv VI - Dark Nostalgic.mid", n:"Catacomb · i vdim iv VI" },
+  { e:["Catacomb"], p:"midi/chords/Minor/A - i7 VI III7 VII6 i i7 III7 iv7 - Dark Nostalgic.mid", n:"Catacomb · i7 VI III7 VII6" },
+  { e:["Catacomb"], p:"midi/chords/Minor/A - VII iv v i - Mysterious Dark.mid", n:"Catacomb · VII iv v i" },
+  { e:["Catacomb"], p:"midi/chords/Minor/A - i ii v III i ii v VII - Mysterious Dramatic.mid", n:"Catacomb · i ii v III" },
+  { e:["Void","Catacomb"], p:"midi/chords/Modal/A - I ivm bIIIM bVIIM - Mysterious Nostalgic.mid", n:"Void·Catacomb · I ivm bIIIM bVIIM" },
+  { e:["Fire","Catacomb"], p:"midi/chords/Modal/A - VIM bVIM im bVIIM - Surprised Rebellious.mid", n:"Fire·Catacomb · VIM bVIM im bVIIM" },
 ];
 
 // Per-element voicing/instrument profile feeding expandChordRoles().
-const ELEMENT_ORDER = ['Earth','Water','Fire','Wind','Void'];
+const ELEMENT_ORDER = ['Earth','Water','Fire','Wind','Void','Catacomb'];
 const ELEMENT_PROFILE = {
-  Earth: { chordInst:'organ', chordReverb:0.18, color:'#ffd54f', arp:'off',   icon:'🜃' },
-  Water: { chordInst:'flute', chordReverb:0.32, color:'#4fc3f7', arp:'off',   icon:'🜄' },
-  Fire:  { chordInst:'synth', chordReverb:0.12, color:'#ff6b6b', arp:'full',  arpInst:'pluck',   icon:'🜂' },
-  Wind:  { chordInst:'bell',  chordReverb:0.36, color:'#aed581', arp:'light', arpInst:'marimba', icon:'🜁' },
-  Void:  { chordInst:'synth', chordReverb:0.52, color:'#ba68c8', arp:'off',   chordVol:0.6, icon:'◯' },
+  Earth:    { chordInst:'organ',     chordReverb:0.18, color:'#ffd54f', arp:'off',   icon:'🜃' },
+  Water:    { chordInst:'flute',     chordReverb:0.32, color:'#4fc3f7', arp:'off',   icon:'🜄' },
+  Fire:     { chordInst:'synth',     chordReverb:0.12, color:'#ff6b6b', arp:'full',  arpInst:'pluck',   icon:'🜂' },
+  Wind:     { chordInst:'bell',      chordReverb:0.36, color:'#aed581', arp:'light', arpInst:'marimba', icon:'🜁' },
+  Void:     { chordInst:'synth',     chordReverb:0.52, color:'#ba68c8', arp:'off',   chordVol:0.6, icon:'◯' },
+  Catacomb: { chordInst:'smp_church',chordReverb:0.46, color:'#8d6e63', arp:'light', arpInst:'pluck', chordVol:0.62, icon:'⚰' },
 };
 const ARP_RANK = { off:0, light:1, full:2 };
 
@@ -4776,7 +4846,7 @@ function buildElementalUI() {
   });
   const any = document.createElement('button');
   any.className = 'el-btn'; any.dataset.el = 'Any'; any.textContent = '✦ Any';
-  any.title = 'Load & loop a random clip from all 35';
+  any.title = `Load & loop a random clip from all ${ELEMENTAL_CHORDS.length}`;
   any.addEventListener('click', () => startElemental('Any'));
   wrap.appendChild(any);
 }
