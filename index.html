@@ -3573,7 +3573,7 @@ function expandChordRoles(incomingTracks, opts={}) {
     arp:'full',    arpInst:'pluck',    arpVol:0.40,  arpReverb:0.05,   arpColor:'#ff6b6b',
     melody:true,   melodyInst:'bell',  melodyVol:0.52, melodyReverb:0.28, melodyColor:'#ce93d8',
     kickHits: [],  // { beatStart } array from kick track — locks bass line rhythm to kick
-    chordStyle: 'held', // 'held' | 'stab' | 'pump' | 'power'
+    chordStyle: 'stab', // 'held' | 'stab' | 'pump' | 'power'  — stab is now the default
     arpMode: 'standard', // 'standard' | 'chip'
     ...opts
   };
@@ -3607,9 +3607,18 @@ function expandChordRoles(incomingTracks, opts={}) {
         ({ id:uid(), beatStart:cStart+beat, duration:dur, midiNote:midi, velocity:vel });
 
       if (style === 'stab') {
-        // Two sharp chord hits per chord — beat 0 (long) and beat 2 (short)
-        const hits = [{b:0, dur:0.9, vel:88}, {b:2, dur:0.45, vel:72}]
-          .filter(h => h.b < cLen);
+        // Cycle through rhythmic stab patterns so adjacent chords feel different.
+        // Each pattern is a list of { b: beat-offset, dur: duration, vel: velocity }.
+        const STAB_PATTERNS = [
+          [{b:0,dur:.90,vel:90},{b:2,dur:.45,vel:72}],                              // standard: 0 + 2
+          [{b:0,dur:.90,vel:88},{b:2,dur:.90,vel:80}],                              // two equal hits
+          [{b:0,dur:.45,vel:88},{b:.5,dur:.40,vel:70},{b:2,dur:.90,vel:84}],       // quick double then 2
+          [{b:0,dur:1.8,vel:86},{b:2.5,dur:.42,vel:68}],                            // long hit + offbeat pickup
+          [{b:0,dur:.90,vel:90},{b:1.5,dur:.42,vel:66},{b:3,dur:.42,vel:74}],      // 3 hits with syncopation
+          [{b:0,dur:.45,vel:88},{b:1,dur:.90,vel:76},{b:3,dur:.45,vel:72}],        // pushed 2nd hit
+          [{b:0,dur:.90,vel:85},{b:2,dur:.45,vel:70},{b:3.5,dur:.35,vel:65}],      // 2 + anticipation
+        ];
+        const hits = STAB_PATTERNS[ci % STAB_PATTERNS.length].filter(h => h.b < cLen);
         for (const h of hits)
           for (const n of sorted) voiced.push(mk(h.b, h.dur, n.midiNote, h.vel));
 
