@@ -559,32 +559,21 @@ let fxMorphSerial = 0;        // cancels in-progress FX state morphs
 // Audio
 let audioCtx      = null;
 // ── DeRez AudioWorklet (bit-crusher + sample-rate reducer) ────────
-const DEREZ_WORKLET = `
-class DeRezProcessor extends AudioWorkletProcessor {
-  static get parameterDescriptors() {
-    return [
-      { name:'bits', defaultValue:16, minValue:1,    maxValue:16, automationRate:'k-rate' },
-      { name:'rate', defaultValue:1,  minValue:0.01, maxValue:1,  automationRate:'k-rate' },
-    ];
+// DeRez: WaveShaper (bit crush) + BiquadFilter (rate muffle) in a dry/wet split.
+// Fully synchronous — no async, no AudioWorklet, stereo-safe by design.
+// WaveShaper processes both channels automatically; no mono bug possible.
+
+function buildBitCrushCurve(bits) {
+  const N = 32768; // curve resolution
+  const curve = new Float32Array(N + 1);
+  const b = Math.max(1, Math.min(16, Math.round(bits)));
+  const steps = Math.pow(2, b - 1);
+  for (let i = 0; i <= N; i++) {
+    const x = (i * 2 / N) - 1; // -1 → 1
+    curve[i] = b >= 16 ? x : Math.round(x * steps) / steps; // identity when 16-bit
   }
-  constructor() { super(); this._phase=0; this._held=0; }
-  process(inputs, outputs, params) {
-    const inp = inputs[0]?.[0];
-    const out = outputs[0][0];
-    if (!inp || !out) return true;
-    const bits  = params.bits[0];
-    const rate  = params.rate[0];
-    const steps = Math.pow(2, Math.max(1, Math.round(bits)) - 1);
-    for (let i=0; i<out.length; i++) {
-      this._phase += rate;
-      if (this._phase >= 1) { this._phase -= 1; this._held = Math.round(inp[i]*steps)/steps; }
-      out[i] = this._held;
-    }
-    return true;
-  }
+  return curve;
 }
-registerProcessor('derez', DeRezProcessor);
-`;
 
 let masterBus     = null;     // GainNode — compressor chain end → here
 let sharedReverb  = null;     // ConvolverNode
@@ -596,10 +585,10 @@ let outputLimiter = null;
 let noiseBuffer   = null;
 let hissGainNode  = null;  // tape hiss master volume — muted when stopped
 let bassBoost     = null;  // low-shelf EQ on master bus
-let derezNode     = null;  // AudioWorkletNode — bit crusher + S&H downsampler
-let derezDryGain  = null;  // dry path (1-mix)
-let derezWetGain  = null;  // wet path (mix), signal passes through derezNode
-let derezReady    = false; // true once worklet is registered
+let derezCrusher  = null;  // WaveShaper — bit depth quantisation (both channels)
+let derezFilter   = null;  // BiquadFilter lowpass — simulates sample-rate reduction
+let derezDryGain  = null;  // dry path gain (1 − mix)
+let derezWetGain  = null;  // wet path gain (mix)
 const trackEngines = {};      // trackId → TrackEngine instance
 const sampleBuffers = {};      // trackId → decoded AudioBuffer for loaded MP3/sample instrument
 const xfadeBuffers  = {};      // trackId → crossfade-baked loop buffer (lazy, keyed by loopStart+loopEnd)
@@ -889,31 +878,37 @@ async function ensureAudio() {
   bassBoost.connect(compressor);
   compressor.connect(outputLimiter);
 
-  // DeRez dry/wet split — sits after the limiter
-  derezDryGain = audioCtx.createGain();
-  derezWetGain = audioCtx.createGain();
-  const dfx = project.masterFx;
-  derezDryGain.gain.value = 1 - (dfx.derezMix||0);
-  derezWetGain.gain.value = dfx.derezMix||0;
-  outputLimiter.connect(derezDryGain);
-  derezDryGain.connect(audioCtx.destination);
-  derezWetGain.connect(audioCtx.destination);
+  // ── DeRez — synchronous dry/wet split after limiter ────────────
+  // Dry path: outputLimiter → derezDryGain → destination
+  // Wet path: outputLimiter → derezCrusher → derezFilter → derezWetGain → destination
+  // WaveShaper handles both L and R channels automatically — no stereo bug possible.
+  {
+    const dfx = project.masterFx;
+    const mix  = dfx.derezMix  ?? 0;
+    const bits = dfx.derezBits ?? 16;
+    const rate = dfx.derezRate ?? 1;
 
-  // Register AudioWorklet for bit-crush + S&H; async so audio still starts immediately
-  ;(async () => {
-    try {
-      const blob = new Blob([DEREZ_WORKLET], { type:'application/javascript' });
-      const blobUrl = URL.createObjectURL(blob);
-      await audioCtx.audioWorklet.addModule(blobUrl);
-      URL.revokeObjectURL(blobUrl);
-      derezNode = new AudioWorkletNode(audioCtx, 'derez');
-      derezNode.parameters.get('bits').value = dfx.derezBits ?? 16;
-      derezNode.parameters.get('rate').value = dfx.derezRate ?? 1;
-      outputLimiter.connect(derezNode);
-      derezNode.connect(derezWetGain);
-      derezReady = true;
-    } catch(e) { console.warn('DeRez worklet failed:', e); }
-  })();
+    derezDryGain = audioCtx.createGain();
+    derezWetGain = audioCtx.createGain();
+    derezDryGain.gain.value = 1 - mix;
+    derezWetGain.gain.value = mix;
+
+    derezCrusher = audioCtx.createWaveShaper();
+    derezCrusher.curve = buildBitCrushCurve(bits);
+    derezCrusher.oversample = '4x'; // smoother quantisation steps
+
+    derezFilter = audioCtx.createBiquadFilter();
+    derezFilter.type = 'lowpass';
+    derezFilter.frequency.value = Math.round(2000 + 20050 * rate); // 2kHz–22kHz
+    derezFilter.Q.value = 0.5;
+
+    outputLimiter.connect(derezDryGain);
+    outputLimiter.connect(derezCrusher);
+    derezCrusher.connect(derezFilter);
+    derezFilter.connect(derezWetGain);
+    derezDryGain.connect(audioCtx.destination);
+    derezWetGain.connect(audioCtx.destination);
+  }
 
   // Tape hiss routes AFTER compressor so loud notes don't pump it
   startTapeHiss(audioCtx, outputLimiter);
@@ -4215,19 +4210,22 @@ document.getElementById('mc-hiss').addEventListener('input', async e => {
 
 // ── DeRez controls ─────────────────────────────────────────────────
 function applyDeRezFx() {
-  const fx = project.masterFx;
-  const mix = fx.derezMix ?? 0;
-  if (derezDryGain) derezDryGain.gain.setTargetAtTime(1 - mix, audioCtx.currentTime, 0.02);
-  if (derezWetGain) derezWetGain.gain.setTargetAtTime(mix,     audioCtx.currentTime, 0.02);
-  if (derezReady && derezNode) {
-    derezNode.parameters.get('bits').value = fx.derezBits ?? 16;
-    derezNode.parameters.get('rate').value = fx.derezRate ?? 1;
-  }
+  if (!audioCtx || !derezDryGain) return;
+  const fx   = project.masterFx;
+  const mix  = fx.derezMix  ?? 0;
+  const bits = fx.derezBits ?? 16;
+  const rate = fx.derezRate ?? 1;
+  const now  = audioCtx.currentTime;
+  derezDryGain.gain.setTargetAtTime(1 - mix, now, 0.02);
+  derezWetGain.gain.setTargetAtTime(mix,     now, 0.02);
+  if (derezCrusher) derezCrusher.curve = buildBitCrushCurve(bits);
+  if (derezFilter)  derezFilter.frequency.setTargetAtTime(2000 + 20050 * rate, now, 0.02);
 }
 
 function derezRateLabel(v) {
   if (v >= 0.99) return 'full';
-  const hz = Math.round(v * (audioCtx?.sampleRate || 44100));
+  // Show approximate equivalent sample rate (2k–22k Hz)
+  const hz = Math.round(2000 + 20050 * v);
   return hz >= 1000 ? (hz/1000).toFixed(1)+'k' : hz+'Hz';
 }
 
