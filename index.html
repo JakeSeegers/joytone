@@ -454,6 +454,11 @@ const INSTRUMENTS = [
   {id:'guitar',  label:'Guitar'},
   {id:'flute',   label:'Flute'},
   {id:'synth',   label:'Synth'},
+  // ── Chip synths ──────────────────────────────────────────────────
+  {id:'chip',    label:'🎮 Chip Square (NES pulse)'},
+  {id:'chitri',  label:'🎮 Chip Triangle (NES bass)'},
+  {id:'chisaw',  label:'🎮 Chip Saw (SID/MegaDrive)'},
+  // ─────────────────────────────────────────────────────────────────
   {id:'sample',  label:'Sample'},
   {id:'kick',    label:'Kick'},
   {id:'snare',   label:'Snare'},
@@ -1554,8 +1559,11 @@ function playNote(instrument, freq, dur, t, dest) {
     case 'marimba': playMarimba(freq,dur,t,dest); break;
     case 'pluck':   playPluck(freq,dur,t,dest); break;
     case 'bass':    playBass(freq,dur,t,dest); break;
-    case 'organ':   playOrgan(freq,dur,t,dest); break;
-    case 'piano':   playPiano(freq,dur,t,dest); break;
+    case 'organ':    playOrgan(freq,dur,t,dest); break;
+    case 'chip':     playChipSquare(freq,dur,t,dest); break;
+    case 'chitri':   playChipTriangle(freq,dur,t,dest); break;
+    case 'chisaw':   playChipSaw(freq,dur,t,dest); break;
+    case 'piano':    playPiano(freq,dur,t,dest); break;
     case 'guitar':  playGuitar(freq,dur,t,dest); break;
     case 'flute':   playFlute(freq,dur,t,dest); break;
     case 'kick':    playKick(t,dest); break;
@@ -1668,6 +1676,70 @@ function playOrgan(freq,dur,t,dest) {
     if(i===0) addWow(ctx, osc.frequency, freq, t, dur+0.1);
     osc.connect(g); g.connect(master); osc.start(t); osc.stop(t+dur+0.1);
   });
+}
+
+// ── CHIP SYNTH INSTRUMENTS ─────────────────────────────────────────
+// Faithful to 8-bit hardware: square wave (NES pulse ch.), triangle (NES ch.3),
+// sawtooth (SID/Mega Drive). All use instant/near-instant envelopes like the hardware.
+
+function playChipSquare(freq, dur, t, dest) {
+  // NES Pulse channel: 50% duty square wave, very fast attack, hard clip-style dynamics
+  const ctx = audioCtx;
+  const osc = ctx.createOscillator();
+  osc.type = 'square';
+  osc.frequency.setValueAtTime(freq, t);
+
+  // Optional duty-cycle flavour: slight PWM via detune LFO
+  const pwmLfo = ctx.createOscillator();
+  pwmLfo.frequency.value = 7; // 7 Hz — fast shimmer
+  const pwmGain = ctx.createGain(); pwmGain.gain.value = 3; // ±3 cent width
+  pwmLfo.connect(pwmGain); pwmGain.connect(osc.detune);
+  pwmLfo.start(t); pwmLfo.stop(t + dur + 0.05);
+
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.linearRampToValueAtTime(0.38, t + 0.003); // 3ms attack — instant feel
+  g.gain.setValueAtTime(0.38, t + Math.max(0.003, dur - 0.008));
+  g.gain.linearRampToValueAtTime(0.0001, t + dur + 0.01);
+
+  osc.connect(g); g.connect(dest);
+  osc.start(t); osc.stop(t + dur + 0.05);
+}
+
+function playChipTriangle(freq, dur, t, dest) {
+  // NES Triangle channel: ultra-clean, no envelope ramp (hardware quirk = instant on/off)
+  const ctx = audioCtx;
+  const osc = ctx.createOscillator();
+  osc.type = 'triangle';
+  osc.frequency.setValueAtTime(freq, t);
+
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.55, t);                 // NES triangle has no volume register
+  g.gain.setValueAtTime(0.55, t + Math.max(0, dur - 0.003));
+  g.gain.linearRampToValueAtTime(0.0001, t + dur + 0.003);
+
+  osc.connect(g); g.connect(dest);
+  osc.start(t); osc.stop(t + dur + 0.01);
+}
+
+function playChipSaw(freq, dur, t, dest) {
+  // SID / Mega Drive: sawtooth with fast 8-bit-style ADSR
+  const ctx = audioCtx;
+  const osc = ctx.createOscillator();
+  osc.type = 'sawtooth';
+  osc.frequency.setValueAtTime(freq, t);
+
+  const filt = ctx.createBiquadFilter();
+  filt.type = 'lowpass'; filt.frequency.value = freq * 6; filt.Q.value = 1.2;
+
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.linearRampToValueAtTime(0.30, t + 0.005);
+  g.gain.setValueAtTime(0.30, t + Math.max(0.005, dur - 0.02));
+  g.gain.linearRampToValueAtTime(0.0001, t + dur + 0.02);
+
+  osc.connect(filt); filt.connect(g); g.connect(dest);
+  osc.start(t); osc.stop(t + dur + 0.05);
 }
 
 function playPiano(freq,dur,t,dest) {
@@ -3055,6 +3127,19 @@ const ELEMENTS = {
     },
     arp:'light',
   },
+  chip: {
+    emoji:'👾', name:'Chip',  color:'#1a237e',
+    tempo:140, rootPc:4,  // E minor — fast, arcade
+    sections:{ intro:'iiV',      A:'deceptive',  B:'walkdown',  C:'twist'     },
+    drums:{
+      intro:{ vel:.50, hat:.20, xk:false },
+      A:    { vel:1.10, hat:1.0, xk:false },
+      B:    { vel:.72, hat:.60, xk:false  },
+      C:    { vel:1.20, hat:1.0, xk:true  },
+    },
+    arp:'turbo', // 32nd notes — classic buzzing chord
+    chipMode: true, // use chip synth instruments
+  },
 };
 
 function getDualElement() {
@@ -3073,10 +3158,11 @@ function getDualElement() {
 
 function pickRandomElement() {
   const r = Math.random();
-  if (r < .20) return ELEMENTS.earth;
-  if (r < .40) return ELEMENTS.water;
-  if (r < .60) return ELEMENTS.fire;
-  if (r < .80) return ELEMENTS.wind;
+  if (r < .17) return ELEMENTS.earth;
+  if (r < .34) return ELEMENTS.water;
+  if (r < .51) return ELEMENTS.fire;
+  if (r < .68) return ELEMENTS.wind;
+  if (r < .85) return ELEMENTS.chip;
   return getDualElement();
 }
 
@@ -3147,15 +3233,40 @@ function buildElementalSection(elCfg, sectionType, lengthBars) {
     mkDrum('Hat',   'hat',   hat,   .58, '#80deea');
   }
 
-  // Apply the saved FX preset per track label
+  // Apply FX preset per track label — chip mode uses raw chip synths, others use saved preset
   for (const t of Object.values(tracks)) {
-    const preset = TILE_TRACK_FX[t.label];
-    if (!preset) continue;
-    t.instrument  = preset.instrument;
-    t.volume      = preset.volume;
-    t.reverbSend  = preset.reverbSend;
-    t.effects     = { ...DEFAULT_FX(), ...preset.fx };
-    if (preset.sample) t.sample = { ...preset.sample };
+    if (elCfg.chipMode) {
+      // Chip mode: override instruments with hardware-accurate chip voices
+      const chipMap = {
+        'Chords':    { instrument:'chip',   volume:0.35, reverbSend:0.08,
+                       fx:{ filterType:'lowpass', filterCutoff:8000, filterRes:0.3, distDrive:0.04, distMix:0.04 } },
+        'Bass Drone':{ instrument:'chitri', volume:0.60, reverbSend:0.02,
+                       fx:{ filterType:'lowpass', filterCutoff:2000, filterRes:0.5 } },
+        'Bass Line': { instrument:'chitri', volume:0.65, reverbSend:0.02,
+                       fx:{ filterType:'lowpass', filterCutoff:2000, filterRes:0.5 } },
+        'Arpeggio':  { instrument:'chip',   volume:0.28, reverbSend:0.04,
+                       fx:{ filterType:'highpass', filterCutoff:400, filterRes:0.3 } },
+        'Melody':    { instrument:'chisaw', volume:0.38, reverbSend:0.06,
+                       fx:{ filterType:'lowpass', filterCutoff:6000, filterRes:0.8,
+                            lfoDepth:0.10, lfoRate:6.0 } },
+      };
+      const cm = chipMap[t.label];
+      if (cm) {
+        t.instrument = cm.instrument;
+        t.volume     = cm.volume;
+        t.reverbSend = cm.reverbSend;
+        t.effects    = { ...DEFAULT_FX(), ...cm.fx };
+        t.sample     = null;
+      }
+    } else {
+      const preset = TILE_TRACK_FX[t.label];
+      if (!preset) continue;
+      t.instrument  = preset.instrument;
+      t.volume      = preset.volume;
+      t.reverbSend  = preset.reverbSend;
+      t.effects     = { ...DEFAULT_FX(), ...preset.fx };
+      if (preset.sample) t.sample = { ...preset.sample };
+    }
   }
 
   return { lengthBars, tracks };
@@ -3482,7 +3593,7 @@ function expandChordRoles(incomingTracks, opts={}) {
   // Arpeggio — cycling chord tones; 'light' = 8ths, 'full' = 16ths, 'off' = none.
   const arpNotes = [];
   if (o.arp && o.arp !== 'off') {
-    const step = o.arp === 'light' ? 0.5 : 0.25;
+    const step = o.arp === 'light' ? 0.5 : o.arp === 'turbo' ? 0.125 : 0.25;
     for (let i = 0; i < chords.length; i++) {
       const chord  = chords[i];
       const start  = chord[0].beatStart;
