@@ -1036,7 +1036,13 @@ class TrackEngine {
     // satBus merges dry+wet saturator paths before going to out splits
     this.satBus = ctx.createGain(); this.satBus.gain.value = 1;
 
-    // Wire: trackGain → pan → corrective EQ → creative filter → saturation → [dry, rv, per-track delay sends]
+    // Per-track DeRez — bit crusher applied BEFORE saturation so quantisation
+    // steps get amplified by the distortion rather than washed out by it.
+    this.derezCrusher = ctx.createWaveShaper();
+    this.derezCrusher.curve = buildBitCrushCurve(project.masterFx?.derezBits ?? 16);
+    this.derezCrusher.oversample = 'none';
+
+    // Wire: trackGain → pan → corrective EQ → derez → creative filter → saturation → [dry, rv, per-track delay sends]
     if (this.panner) {
       this.trackGain.connect(this.panner);
       this.panner.connect(this.eqHPF);
@@ -1046,7 +1052,8 @@ class TrackEngine {
     this.eqHPF.connect(this.eqLow);
     this.eqLow.connect(this.eqMid);
     this.eqMid.connect(this.eqHigh);
-    this.eqHigh.connect(this.filter);
+    this.eqHigh.connect(this.derezCrusher);
+    this.derezCrusher.connect(this.filter);
     this.filter.connect(this.saturatorDry);
     this.filter.connect(this.saturator);
     this.saturator.connect(this.saturatorWet);
@@ -1102,12 +1109,17 @@ class TrackEngine {
     this.saturatorWet.gain.setTargetAtTime(mix,   audioCtx.currentTime, 0.02);
   }
 
+  // Update the per-track bit crusher from master derez settings
+  applyDerez(bits) {
+    if (this.derezCrusher) this.derezCrusher.curve = buildBitCrushCurve(bits ?? 16);
+  }
+
   destroy() {
     try { this.lfo.stop(); } catch(e) {}
-    // Disconnect every node so nothing leaks into the audio graph
     for (const node of [
       this.trackGain, this.panner, this.eqHPF, this.eqLow, this.eqMid, this.eqHigh,
-      this.filter, this.saturator, this.saturatorDry, this.saturatorWet, this.satBus,
+      this.derezCrusher, this.filter,
+      this.saturator, this.saturatorDry, this.saturatorWet, this.satBus,
       this.dryGain, this.rvSend, this.dlySend, this.delay,
       this.delayFeedback, this.lfoGain
     ]) { try { node.disconnect(); } catch(e) {} }
@@ -4389,10 +4401,16 @@ function applyDeRezFx() {
   const bits = fx.derezBits ?? 16;
   const rate = fx.derezRate ?? 1;
   const now  = audioCtx.currentTime;
+
+  // Master dry/wet + rate filter (master stage shapes the overall colour)
   derezDryGain.gain.setTargetAtTime(1 - mix, now, 0.02);
   derezWetGain.gain.setTargetAtTime(mix,     now, 0.02);
   if (derezCrusher) derezCrusher.curve = buildBitCrushCurve(bits);
   if (derezFilter)  derezFilter.frequency.setTargetAtTime(2000 + 20050 * rate, now, 0.02);
+
+  // Per-track bit crushers — applied BEFORE per-track saturation so the
+  // quantisation artifacts get amplified rather than buried by distortion.
+  for (const eng of Object.values(trackEngines)) eng.applyDerez(bits);
 }
 
 function derezRateLabel(v) {
