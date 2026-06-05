@@ -326,6 +326,22 @@ input[type=range]{cursor:pointer}
       <span class="mc-val" id="mc-hiss-val">low</span>
     </div>
     <div class="sep"></div>
+    <div class="mc-group" title="Bit depth — 16=off, lower=more crunchy">
+      <label style="color:#ff9a6c">BITS</label>
+      <input type="range" id="mc-derez-bits" min="1" max="16" step="1" value="16">
+      <span class="mc-val" id="mc-derez-bits-val">16</span>
+    </div>
+    <div class="mc-group" title="Sample rate ratio — 100%=off, lower=more lo-fi">
+      <label style="color:#ff9a6c">RATE</label>
+      <input type="range" id="mc-derez-rate" min="0.03" max="1" step="0.01" value="1">
+      <span class="mc-val" id="mc-derez-rate-val">full</span>
+    </div>
+    <div class="mc-group" title="DeRez wet/dry mix">
+      <label style="color:#ff9a6c">DEREZ</label>
+      <input type="range" id="mc-derez-mix" min="0" max="1" step="0.01" value="0">
+      <span class="mc-val" id="mc-derez-mix-val">off</span>
+    </div>
+    <div class="sep"></div>
     <div class="mc-group" id="fx-state-wrap">
       <button id="btn-save-fx-state" title="Save the current master and per-track settings as a new recallable FX state.">+ Save State</button>
       <button id="btn-download-fx-states" title="Download all saved FX states as a JSON preset bank.">⬇ FX Set</button>
@@ -530,6 +546,7 @@ const DEFAULT_MASTER_FX = () => ({
   bassGain:0, bassFreq:120,
   masterVolume:0.7,
   hissLevel:0.004,
+  derezBits:16, derezRate:1.0, derezMix:0.0,
 });
 
 // ── STATE ──────────────────────────────────────────────────────────
@@ -541,6 +558,34 @@ let fxMorphSerial = 0;        // cancels in-progress FX state morphs
 
 // Audio
 let audioCtx      = null;
+// ── DeRez AudioWorklet (bit-crusher + sample-rate reducer) ────────
+const DEREZ_WORKLET = `
+class DeRezProcessor extends AudioWorkletProcessor {
+  static get parameterDescriptors() {
+    return [
+      { name:'bits', defaultValue:16, minValue:1,    maxValue:16, automationRate:'k-rate' },
+      { name:'rate', defaultValue:1,  minValue:0.01, maxValue:1,  automationRate:'k-rate' },
+    ];
+  }
+  constructor() { super(); this._phase=0; this._held=0; }
+  process(inputs, outputs, params) {
+    const inp = inputs[0]?.[0];
+    const out = outputs[0][0];
+    if (!inp || !out) return true;
+    const bits  = params.bits[0];
+    const rate  = params.rate[0];
+    const steps = Math.pow(2, Math.max(1, Math.round(bits)) - 1);
+    for (let i=0; i<out.length; i++) {
+      this._phase += rate;
+      if (this._phase >= 1) { this._phase -= 1; this._held = Math.round(inp[i]*steps)/steps; }
+      out[i] = this._held;
+    }
+    return true;
+  }
+}
+registerProcessor('derez', DeRezProcessor);
+`;
+
 let masterBus     = null;     // GainNode — compressor chain end → here
 let sharedReverb  = null;     // ConvolverNode
 let sharedDelay   = null;     // DelayNode
@@ -551,6 +596,10 @@ let outputLimiter = null;
 let noiseBuffer   = null;
 let hissGainNode  = null;  // tape hiss master volume — muted when stopped
 let bassBoost     = null;  // low-shelf EQ on master bus
+let derezNode     = null;  // AudioWorkletNode — bit crusher + S&H downsampler
+let derezDryGain  = null;  // dry path (1-mix)
+let derezWetGain  = null;  // wet path (mix), signal passes through derezNode
+let derezReady    = false; // true once worklet is registered
 const trackEngines = {};      // trackId → TrackEngine instance
 const sampleBuffers = {};      // trackId → decoded AudioBuffer for loaded MP3/sample instrument
 const xfadeBuffers  = {};      // trackId → crossfade-baked loop buffer (lazy, keyed by loopStart+loopEnd)
@@ -839,7 +888,32 @@ async function ensureAudio() {
   masterBus.connect(bassBoost);
   bassBoost.connect(compressor);
   compressor.connect(outputLimiter);
-  outputLimiter.connect(audioCtx.destination);
+
+  // DeRez dry/wet split — sits after the limiter
+  derezDryGain = audioCtx.createGain();
+  derezWetGain = audioCtx.createGain();
+  const dfx = project.masterFx;
+  derezDryGain.gain.value = 1 - (dfx.derezMix||0);
+  derezWetGain.gain.value = dfx.derezMix||0;
+  outputLimiter.connect(derezDryGain);
+  derezDryGain.connect(audioCtx.destination);
+  derezWetGain.connect(audioCtx.destination);
+
+  // Register AudioWorklet for bit-crush + S&H; async so audio still starts immediately
+  ;(async () => {
+    try {
+      const blob = new Blob([DEREZ_WORKLET], { type:'application/javascript' });
+      const blobUrl = URL.createObjectURL(blob);
+      await audioCtx.audioWorklet.addModule(blobUrl);
+      URL.revokeObjectURL(blobUrl);
+      derezNode = new AudioWorkletNode(audioCtx, 'derez');
+      derezNode.parameters.get('bits').value = dfx.derezBits ?? 16;
+      derezNode.parameters.get('rate').value = dfx.derezRate ?? 1;
+      outputLimiter.connect(derezNode);
+      derezNode.connect(derezWetGain);
+      derezReady = true;
+    } catch(e) { console.warn('DeRez worklet failed:', e); }
+  })();
 
   // Tape hiss routes AFTER compressor so loud notes don't pump it
   startTapeHiss(audioCtx, outputLimiter);
@@ -3855,6 +3929,13 @@ function syncMasterStrip() {
   document.getElementById('mc-comp-val').textContent = fx.compThreshold;
   document.getElementById('mc-hiss').value = fx.hissLevel;
   document.getElementById('mc-hiss-val').textContent = hissLabel(fx.hissLevel);
+  const bits = fx.derezBits ?? 16, rate = fx.derezRate ?? 1, mix = fx.derezMix ?? 0;
+  document.getElementById('mc-derez-bits').value = bits;
+  document.getElementById('mc-derez-bits-val').textContent = bits === 16 ? '16' : bits+'b';
+  document.getElementById('mc-derez-rate').value = rate;
+  document.getElementById('mc-derez-rate-val').textContent = rate >= 0.99 ? 'full' : Math.round(rate*100)+'%';
+  document.getElementById('mc-derez-mix').value = mix;
+  document.getElementById('mc-derez-mix-val').textContent = mix === 0 ? 'off' : Math.round(mix*100)+'%';
 }
 
 
@@ -4130,6 +4211,44 @@ document.getElementById('mc-hiss').addEventListener('input', async e => {
   // Only update live gain if currently playing (otherwise it stays silent until next play)
   if (hissGainNode && isPlaying) hissGainNode.gain.setTargetAtTime(v, audioCtx.currentTime, 0.3);
   saveProject();
+});
+
+// ── DeRez controls ─────────────────────────────────────────────────
+function applyDeRezFx() {
+  const fx = project.masterFx;
+  const mix = fx.derezMix ?? 0;
+  if (derezDryGain) derezDryGain.gain.setTargetAtTime(1 - mix, audioCtx.currentTime, 0.02);
+  if (derezWetGain) derezWetGain.gain.setTargetAtTime(mix,     audioCtx.currentTime, 0.02);
+  if (derezReady && derezNode) {
+    derezNode.parameters.get('bits').value = fx.derezBits ?? 16;
+    derezNode.parameters.get('rate').value = fx.derezRate ?? 1;
+  }
+}
+
+function derezRateLabel(v) {
+  if (v >= 0.99) return 'full';
+  const hz = Math.round(v * (audioCtx?.sampleRate || 44100));
+  return hz >= 1000 ? (hz/1000).toFixed(1)+'k' : hz+'Hz';
+}
+
+document.getElementById('mc-derez-bits').addEventListener('input', async e => {
+  const v = +e.target.value;
+  document.getElementById('mc-derez-bits-val').textContent = v === 16 ? '16' : v+'b';
+  project.masterFx.derezBits = v;
+  await ensureAudio(); applyDeRezFx(); saveProject();
+});
+document.getElementById('mc-derez-rate').addEventListener('input', async e => {
+  const v = +e.target.value;
+  await ensureAudio();
+  document.getElementById('mc-derez-rate-val').textContent = derezRateLabel(v);
+  project.masterFx.derezRate = v;
+  applyDeRezFx(); saveProject();
+});
+document.getElementById('mc-derez-mix').addEventListener('input', async e => {
+  const v = +e.target.value;
+  document.getElementById('mc-derez-mix-val').textContent = v === 0 ? 'off' : Math.round(v*100)+'%';
+  project.masterFx.derezMix = v;
+  await ensureAudio(); applyDeRezFx(); saveProject();
 });
 
 document.getElementById('btn-save-fx-state').addEventListener('click', saveFxStateButton);
