@@ -3137,7 +3137,7 @@ const ELEMENTS = {
       B:    { vel:.72, hat:.60, xk:false  },
       C:    { vel:1.20, hat:1.0, xk:true  },
     },
-    arp:'turbo', // 32nd notes — classic buzzing chord
+    arp:'full', // 16th notes — tight 3-note chip arp cell, not chaotic turbo
     chipMode: true, // use chip synth instruments
   },
 };
@@ -3206,9 +3206,11 @@ function buildElementalSection(elCfg, sectionType, lengthBars) {
   // Chord / melody / bass tracks via existing generators
   const rawTracks = generateHarmonicProgression(elCfg.rootPc, style);
   const roles = expandChordRoles(rawTracks, {
-    arp:      full ? (elCfg.arp||'full') : 'off',
-    melody:   full,
-    bassLine: full,
+    arp:        full ? (elCfg.arp||'full') : 'off',
+    arpMode:    elCfg.chipMode ? 'chip' : 'standard',
+    chordStyle: elCfg.chipMode ? 'power' : 'stab', // generated chords always rhythmic
+    melody:     full,
+    bassLine:   full,
     kickHits,
   });
 
@@ -3559,6 +3561,8 @@ function expandChordRoles(incomingTracks, opts={}) {
     arp:'full',    arpInst:'pluck',    arpVol:0.40,  arpReverb:0.05,   arpColor:'#ff6b6b',
     melody:true,   melodyInst:'bell',  melodyVol:0.52, melodyReverb:0.28, melodyColor:'#ce93d8',
     kickHits: [],  // { beatStart } array from kick track — locks bass line rhythm to kick
+    chordStyle: 'held', // 'held' | 'stab' | 'pump' | 'power'
+    arpMode: 'standard', // 'standard' | 'chip'
     ...opts
   };
 
@@ -3570,8 +3574,62 @@ function expandChordRoles(incomingTracks, opts={}) {
 
   const chords = groupChords(allNotes);
 
-  // Chord voicing — kept exactly as authored in the source MIDI.
-  const chordNotes = allNotes.map(n => ({...n, id:uid()}));
+  // ── Chord voicing ──────────────────────────────────────────────────
+  // 'held'  – full duration (original MIDI authoring, default for library drops)
+  // 'stab'  – short rhythmic hits on beats 0 and 2, breathing space between
+  // 'pump'  – 8th-note pattern: chord hit + walking individual tones
+  // 'power' – chip-style: root+fifth only as syncopated stabs (no clashing thirds)
+  function voiceChords(chords, style) {
+    if (style === 'held')
+      return allNotes.map(n => ({...n, id:uid()}));
+
+    const voiced = [];
+    for (let ci = 0; ci < chords.length; ci++) {
+      const chord  = chords[ci];
+      const cStart = chord[0].beatStart;
+      const cLen   = ci < chords.length-1
+        ? chords[ci+1][0].beatStart - cStart
+        : Math.max(chord[0].duration, 2);
+      const sorted = [...chord].sort((a,b) => a.midiNote - b.midiNote);
+      const mk = (beat, dur, midi, vel) =>
+        ({ id:uid(), beatStart:cStart+beat, duration:dur, midiNote:midi, velocity:vel });
+
+      if (style === 'stab') {
+        // Two sharp chord hits per chord — beat 0 (long) and beat 2 (short)
+        const hits = [{b:0, dur:0.9, vel:88}, {b:2, dur:0.45, vel:72}]
+          .filter(h => h.b < cLen);
+        for (const h of hits)
+          for (const n of sorted) voiced.push(mk(h.b, h.dur, n.midiNote, h.vel));
+
+      } else if (style === 'pump') {
+        // Beat 0: full chord stab. Beats 1,3: single cycling tones. Beat 2: chord stab.
+        const pattern = [
+          {b:0,   all:true,  dur:0.85, vel:90},
+          {b:1,   all:false, dur:0.42, vel:68, ni:0},
+          {b:2,   all:true,  dur:0.85, vel:80},
+          {b:3,   all:false, dur:0.42, vel:65, ni:1},
+        ].filter(s => s.b < cLen);
+        for (const s of pattern) {
+          if (s.all) { for (const n of sorted) voiced.push(mk(s.b, s.dur, n.midiNote, s.vel)); }
+          else { const n = sorted[s.ni % sorted.length]; voiced.push(mk(s.b, s.dur, n.midiNote, s.vel)); }
+        }
+
+      } else if (style === 'power') {
+        // Root + fifth only, syncopated pattern — no third, no clashing harmonics
+        const root  = sorted[0].midiNote;
+        const fifth = sorted.find(n => (n.midiNote - root + 12) % 12 === 7)?.midiNote ?? root+7;
+        const hits  = [{b:0,vel:92,dur:0.9},{b:1.5,vel:70,dur:0.4},{b:2,vel:85,dur:0.9},{b:3.5,vel:68,dur:0.35}]
+          .filter(h => h.b < cLen);
+        for (const h of hits) {
+          voiced.push(mk(h.b, h.dur, root,  h.vel));
+          voiced.push(mk(h.b, h.dur, fifth, h.vel - 5));
+        }
+      }
+    }
+    return voiced;
+  }
+
+  const chordNotes = voiceChords(chords, o.chordStyle);
 
   // Bass drone — one long held note per chord (original simple bass).
   const bassNotes = o.bass ? chords.map((chord, i) => {
@@ -3600,7 +3658,11 @@ function expandChordRoles(incomingTracks, opts={}) {
       const end    = i < chords.length-1 ? chords[i+1][0].beatStart
                                          : start + chord[0].duration;
       const tones  = [...chord].sort((a,b) => a.midiNote - b.midiNote);
-      const pool   = [...tones, ...tones.map(n => ({...n, midiNote: n.midiNote+12}))];
+      // chip mode: 3-note strict ascending cell (root-3rd-5th only, no octave jump)
+      // standard:  full chord + octave-up copy for wider range
+      const pool = o.arpMode === 'chip'
+        ? tones.slice(0, 3) // just root, 3rd, 5th
+        : [...tones, ...tones.map(n => ({...n, midiNote: n.midiNote+12}))];
       let beat = start, idx = 0;
       while (beat < end - 0.01) {
         const src = pool[idx % pool.length];
