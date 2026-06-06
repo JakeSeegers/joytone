@@ -59,27 +59,48 @@ html,body{height:100%;overflow:hidden;background:#111;color:#ccc;font:13px/1.4 '
 #btn-elemental-auto{padding:2px 9px;font-size:11px}
 #btn-elemental-auto.on{background:#3a2d5a;border-color:#8877cc;color:#e8e0ff}
 
-/* Godaigo adaptive sim strip */
+/* ── Pure adaptive player: hide the DAW editing surface ───────────────
+   The generation + audio engine underneath stays fully intact (the
+   conductor drives it); only the editor chrome is hidden. */
+#master-strip, #section-strip, #elemental-strip, #daw-main,
+#btn-undo, #btn-export-midi, #btn-import-midi, #btn-export-wav,
+#btn-library, #btn-gen-chords, #btn-tile, #btn-load-demo,
+#transport .sep { display:none !important; }
+
+/* Godaigo conductor strip */
 #godaigo-strip{
-  display:flex;align-items:center;gap:6px;padding:4px 10px;
+  display:flex;align-items:center;gap:6px;padding:6px 10px;
   background:#11111a;border-bottom:1px solid #2a2a35;flex-shrink:0;
-  min-height:32px;flex-wrap:wrap
+  min-height:34px;flex-wrap:wrap
 }
 #godaigo-strip .lbl{color:#7a6f9a;font-size:11px;white-space:nowrap;font-weight:600}
 #godaigo-strip .ga-grp{display:flex;align-items:center;gap:4px;flex-wrap:wrap}
 #godaigo-strip .ga-sep{width:1px;height:18px;background:#2a2a35;margin:0 3px}
-.ga-btn{padding:2px 9px;font-size:11px;border:1px solid #444;border-radius:3px;background:#1c1c28;color:#cdc7e0;cursor:pointer}
+.ga-btn{padding:3px 10px;font-size:11px;border:1px solid #444;border-radius:3px;background:#1c1c28;color:#cdc7e0;cursor:pointer}
 .ga-btn:hover{background:#26263a}
 .ga-btn:disabled{opacity:.4;cursor:default}
 .ga-btn.on{background:#2d2d50;color:#fff;box-shadow:0 0 8px rgba(120,120,220,.4)}
-.ga-btn.tile{min-width:52px}
+.ga-btn.tile{min-width:60px}
 .ga-btn.tile .ct{opacity:.7;font-variant-numeric:tabular-nums}
 .ga-btn.tier1{border-color:#4a5a8a}
 .ga-btn.tier2{border-color:#6f7fcf;background:#23233a}
 .ga-btn.tier3{border-color:#9a8be0;background:#2d2d50;color:#fff}
 .ga-state.on{background:#3a2d5a;border-color:#8877cc;color:#e8e0ff}
 #godaigo-strip select{background:#1c1c28;color:#cdc7e0;border:1px solid #444;border-radius:3px;font-size:11px;padding:1px 3px}
-#ga-readout{color:#666;font-size:10px;font-family:monospace;margin-left:auto;white-space:nowrap}
+#ga-readout{color:#888;font-size:10px;font-family:monospace;margin-left:auto;white-space:nowrap}
+
+/* Conductor takes the full window once the editor is hidden */
+#godaigo-stage{flex:1;display:flex;align-items:center;justify-content:center;
+  background:radial-gradient(ellipse at center,#15151f 0%,#0c0c12 100%);overflow:hidden;min-height:0}
+#godaigo-board{display:grid;grid-template-columns:repeat(3,150px);gap:14px}
+.gb-cell{border:1px solid #2a2a35;border-radius:8px;padding:12px 10px;background:#14141c;
+  display:flex;flex-direction:column;align-items:center;gap:6px;transition:box-shadow .4s,border-color .4s,background .4s;cursor:pointer;user-select:none}
+.gb-cell:hover{background:#181824}
+.gb-cell .gb-emoji{font-size:26px}
+.gb-cell .gb-name{font-size:12px;font-weight:600;letter-spacing:.5px}
+.gb-cell .gb-meter{width:100%;height:5px;border-radius:3px;background:#222;overflow:hidden}
+.gb-cell .gb-fill{height:100%;width:0;background:#6f7fcf;transition:width .5s}
+.gb-cell .gb-tier{font-size:10px;color:#777;font-family:monospace}
 
 /* DAW main area */
 #daw-main{display:flex;flex:1;overflow:hidden;min-height:0}
@@ -394,50 +415,51 @@ input[type=range]{cursor:pointer}
     <button id="btn-elemental-auto" title="Auto-shuffle: at each loop boundary, swap to another random clip from the current element filter.">🎲 Auto</button>
   </div>
 
-  <!-- ── GODAIGO ADAPTIVE SIM ─────────────────────────────────────────
-       Live preview of the Godaigo adaptive music engine (music-engine.js).
-       The board writes the music: reveal tiles to layer element stems, cast
-       scrolls, open/resolve the response window, shift game state, and trigger
-       the convergence finale — the same hooks the game will wire to. -->
+  <!-- ── GODAIGO CONDUCTOR ────────────────────────────────────────────
+       The adaptive player. Each element layer is generated from the MIDI
+       libraries (midi/chords per element + midi/drums by feel/density) run
+       through the existing adaptation pipeline (expandChordRoles + the chord
+       variation tool + real voices/FX). The conductor rides each layer's
+       track gains by simulated board state — the same hooks the game wires. -->
   <div id="godaigo-strip">
-    <span class="lbl" title="Adaptive music engine — the soundtrack reacts to simulated board state.">🎴 Adaptive:</span>
+    <span class="lbl" title="Adaptive player — the soundtrack is conducted by board state, sourced from the MIDI libraries.">🎴 Conductor:</span>
     <div class="ga-grp">
-      <button id="ga-toggle" class="ga-btn" title="Start / stop the adaptive engine">▶ Engine</button>
-      <button id="ga-reset" class="ga-btn" title="Clear the simulated board and fade all stems">⟳ Board</button>
+      <button id="ga-toggle" class="ga-btn" title="Start / stop the adaptive player">▶ Play</button>
+      <button id="ga-reset" class="ga-btn" title="Re-deal the board — regenerate all six element layers from the libraries, silent">⟳ New Board</button>
     </div>
-    <div class="ga-sep"></div>
-    <!-- Discovery trigger (§2): each click unflips a tile of that element and
-         drives its stem through the three density tiers. -->
-    <span class="lbl" title="Unflip a tile — first tile = solo voice, 3–4 = full section, most = foreground (§2).">Reveal:</span>
-    <div class="ga-grp" id="ga-reveal"><!-- filled by JS --></div>
     <div class="ga-sep"></div>
     <!-- Scroll / response-window hooks (§4) -->
     <div class="ga-grp">
       <select id="ga-cast-el" title="Element of the scroll being cast"></select>
-      <button id="ga-cast" class="ga-btn" title="Scroll cast — a one-shot accent that punches through the mix">🎴 Cast</button>
-      <button id="ga-counter" class="ga-btn" title="Counter scroll — sharp dissonant cluster, then release">⚔ Counter</button>
+      <button id="ga-cast" class="ga-btn" title="Scroll cast — a brief accent from that element's layer">🎴 Cast</button>
+      <button id="ga-counter" class="ga-btn" title="Counter scroll — sharp swell, then release">⚔ Counter</button>
     </div>
     <div class="ga-grp">
-      <button id="ga-window" class="ga-btn" title="Open the response window — the held breath / standoff">🫧 Window</button>
+      <button id="ga-window" class="ga-btn" title="Open the response window — duck + held breath">🫧 Window</button>
       <select id="ga-resp-el" title="Element of the responding scroll"></select>
-      <button id="ga-respond" class="ga-btn" title="Response played — the held tone resolves into this element's motif">▸ Respond</button>
-      <button id="ga-noresp" class="ga-btn" title="No response — the held tone fades, tension released">✕ None</button>
+      <button id="ga-respond" class="ga-btn" title="Response played — resolves into this element">▸ Respond</button>
+      <button id="ga-noresp" class="ga-btn" title="No response — tension released">✕ None</button>
     </div>
     <div class="ga-sep"></div>
     <!-- Game-state rhythm shifts (§5) -->
     <div class="ga-grp">
-      <button class="ga-btn ga-state" data-state="peaceful" title="Meditative, open — straight feel">🕊 Peaceful</button>
-      <button class="ga-btn ga-state" data-state="contested" title="Friction — swing + ghost notes enter the groove">⚡ Contested</button>
-      <button class="ga-btn ga-state" data-state="endgame" title="Narrowing — driving pulse, tightened feel">🔥 Endgame</button>
-      <button id="ga-turn" class="ga-btn" title="Turn change — a subtle rhythmic breath">↻ Turn</button>
+      <button class="ga-btn ga-state" data-state="peaceful" title="Meditative, open">🕊 Peaceful</button>
+      <button class="ga-btn ga-state" data-state="contested" title="Friction — drums &amp; arps lean in">⚡ Contested</button>
+      <button class="ga-btn ga-state" data-state="endgame" title="Narrowing — driving, full">🔥 Endgame</button>
+      <button id="ga-turn" class="ga-btn" title="Turn change — a subtle breath">↻ Turn</button>
     </div>
     <div class="ga-sep"></div>
     <!-- The Great Convergence (§6) -->
-    <button id="ga-converge" class="ga-btn" title="Win condition — the engine reads the dominant elements and locks in a composed finale">✦ Convergence</button>
-    <span id="ga-readout">engine off</span>
+    <button id="ga-converge" class="ga-btn" title="Win condition — foreground the dominant elements as a finale">✦ Convergence</button>
+    <span id="ga-readout">idle</span>
   </div>
 
-  <!-- ── MAIN ─────────────────────────────────────────────────────── -->
+  <!-- ── BOARD STAGE — click an element tile to reveal it (§2) ─────────── -->
+  <div id="godaigo-stage">
+    <div id="godaigo-board"><!-- filled by JS --></div>
+  </div>
+
+  <!-- ── MAIN (hidden in pure-player mode) ─────────────────────────── -->
   <div id="daw-main">
 
     <!-- Track headers -->
@@ -5056,124 +5078,281 @@ function init() {
 init();
 </script>
 
-<!-- ── GODAIGO ADAPTIVE MUSIC ENGINE + SIM WIRING ─────────────────────── -->
-<script src="music-engine.js"></script>
+<!-- ── GODAIGO CONDUCTOR ─────────────────────────────────────────────
+     The adaptive player, built ON the generator's engine. Each element layer
+     is generated from the MIDI libraries (midi/chords per element via
+     expandChordRoles + chord-variation pipeline; midi/drums by feel/density),
+     dropped into one looping section, and crossfaded by simulated board state.
+     Reuses the existing voices, FX, and scheduler — no second audio engine. -->
 <script>
-/* Wires the Adaptive strip to the GodaigoMusicEngine. This is a live preview /
-   simulation of the same event hooks the Godaigo game will call (see the §Game
-   hooks block in music-engine.js). The engine runs its own AudioContext,
-   independent of the generator's transport. */
 (function () {
-  if (!window.GodaigoMusicEngine) return;
-  const ELS = window.GodaigoMusicEngine.ELEMENTS;
-  const EMOJI = { earth:'🌍', water:'💧', fire:'🔥', wind:'💨', void:'🌌', catacomb:'⚰️' };
-  const TOTAL = 7;                 // tiles per element on the simulated board
-  const cap = s => s[0].toUpperCase() + s.slice(1);
-  const tierFor = c => c <= 0 ? 0 : c === 1 ? 1 : c <= 4 ? 2 : 3;   // mirrors setElementTiles (§2)
+  const ELS = [
+    { key:'earth',    lib:'Earth',    emoji:'🌍', name:'Earth' },
+    { key:'water',    lib:'Water',    emoji:'💧', name:'Water' },
+    { key:'fire',     lib:'Fire',     emoji:'🔥', name:'Fire' },
+    { key:'wind',     lib:'Wind',     emoji:'💨', name:'Wind' },
+    { key:'void',     lib:'Void',     emoji:'🌌', name:'Void' },
+    { key:'catacomb', lib:'Catacomb', emoji:'⚰️', name:'Catacomb' },
+  ];
+  const byKey = Object.fromEntries(ELS.map(e => [e.key, e]));
+  const LOOP_BARS = 8, TOTAL_TILES = 7;
 
-  const tiles = {}; ELS.forEach(e => tiles[e] = 0);
-  let engine = null, currentState = 'peaceful';
-  const bpmInput = document.getElementById('bpm-input');
-  const status = m => { try { if (typeof setStatus === 'function') setStatus('🎴 ' + m); } catch (e) {} };
+  // Per-role gain factor by tier (§2): solo → section → foreground.
+  const ROLE = {
+    1: { 'Chords':0.5 },
+    2: { 'Chords':1, 'Bass Drone':1, 'Bass Line':1, 'Melody':0.8, 'Kick':0.7, 'Snare':0.6, 'Hat':0.5 },
+    3: { 'Chords':1, 'Bass Drone':1, 'Bass Line':1, 'Melody':1, 'Arpeggio':1, 'Kick':1, 'Snare':1, 'Hat':1 },
+  };
+  // Each element brings its own drum loop, picked from the library by feel/density.
+  const DRUM_PLAN = {
+    earth:    { feel:'halftime',   density:null },
+    water:    { feel:'groovy',     density:null },
+    fire:     { feel:'4otf',       density:null },
+    wind:     { feel:'percussion', density:'medium' },
+    void:     { feel:'percussion', density:'empty' },
+    catacomb: { feel:'halftime',   density:null },
+  };
 
-  // Populate the cast / respond element selects.
-  const castSel = document.getElementById('ga-cast-el');
-  const respSel = document.getElementById('ga-resp-el');
-  ELS.forEach(e => {
-    const o = document.createElement('option'); o.value = e; o.textContent = EMOJI[e] + ' ' + cap(e);
-    castSel.appendChild(o); respSel.appendChild(o.cloneNode(true));
-  });
-  castSel.value = 'fire'; respSel.value = 'void';
+  const S = { built:false, building:false, tiles:{}, tier:{}, gameState:'peaceful', converging:false, layers:{} };
+  ELS.forEach(e => { S.tiles[e.key]=0; S.tier[e.key]=0; });
+  let responseOpen = false, heldVol = null;
 
-  // Reveal-tile buttons — the discovery trigger (§2).
-  const revWrap = document.getElementById('ga-reveal');
-  ELS.forEach(e => {
-    const b = document.createElement('button');
-    b.className = 'ga-btn tile'; b.dataset.el = e;
-    b.innerHTML = EMOJI[e] + ' <span class="ct">0</span>';
-    b.title = 'Unflip a ' + cap(e) + ' tile (' + TOTAL + ' on the board)';
-    b.addEventListener('click', () => revealTile(e));
-    revWrap.appendChild(b);
-  });
+  const $ = id => document.getElementById(id);
+  const status = m => { try { if (typeof setStatus === 'function') setStatus('🎴 ' + m); } catch(e){} };
 
-  function ensureEngine() {
-    if (!engine) engine = new window.GodaigoMusicEngine({ onStatus: status });
-    return engine;
+  // ── Drum library ────────────────────────────────────────────────────────
+  let drumManifest = null;
+  async function pickDrum(feel, density) {
+    if (!drumManifest) {
+      try { drumManifest = (await loadManifest()).filter(e => e.deck === 'drums'); }
+      catch(e){ drumManifest = []; }
+    }
+    const pool = drumManifest.filter(e => e.feel === feel && (density ? e.density === density : !e.density));
+    return pool.length ? pool[(Math.random() * pool.length) | 0] : null;
   }
-  async function ensureStarted() {
-    ensureEngine();
-    if (!engine.running) {
-      engine.setBPM(+bpmInput.value || 84);
-      await engine.start();
-      ELS.forEach(e => engine.setElementTiles(e, tiles[e], TOTAL));   // re-apply the board
-      engine.setGameState(currentState);
+  async function drumTracksFor(plan) {
+    const entry = await pickDrum(plan.feel, plan.density);
+    if (!entry) return [];
+    try {
+      const r = await fetch(encodeURI(entry.path));
+      if (!r.ok) return [];
+      const proj = parseMidi(await r.arrayBuffer());
+      const LBL = { kick:'Kick', snare:'Snare', hat:'Hat' };
+      const out = [];
+      for (const t of Object.values(proj.sections['A'].tracks)) {
+        if (!['kick','snare','hat'].includes(t.instrument)) continue;
+        t.label = LBL[t.instrument];
+        out.push(t);
+      }
+      return out;
+    } catch(e){ return []; }
+  }
+
+  // ── Build one element layer from the MIDI libraries ─────────────────────
+  async function buildLayer(el) {
+    let roles = [];
+    try {
+      const entry = pickRandomElemental(el.lib, null);
+      if (entry) {
+        const r = await fetch(encodeURI(entry.p));
+        if (r.ok) {
+          const proj = parseMidi(await r.arrayBuffer());
+          roles = expandChordRoles(proj.sections['A'].tracks, profileFor([el.lib])) || [];
+        }
+      }
+    } catch(e){ /* drums-only fallback */ }
+    const drums = await drumTracksFor(DRUM_PLAN[el.key]);
+    const sec = project.sections['A'], ids = [];
+    for (const t of [...roles, ...drums]) {
+      t.element = el.key;
+      t._baseVol = t.volume;
+      t.volume = 0;
+      t.muted = true;                 // tier 0 → unscheduled until revealed
+      sec.tracks[t.id] = t;
+      ids.push(t.id);
+    }
+    S.layers[el.key] = ids;
+  }
+
+  async function buildBoard() {
+    if (S.building) return;
+    S.building = true;
+    status('dealing board — generating six layers from the libraries…');
+    await ensureAudio();
+    project = makeProject();
+    project.tempo = clamp(+$('bpm-input').value || 84, 20, 400);
+    const sec = project.sections['A'];
+    sec.tracks = {}; sec.lengthBars = LOOP_BARS;
+    project.sectionOrder = ['A']; activeSectionId = 'A';
+    ELS.forEach(e => { S.tiles[e.key]=0; S.tier[e.key]=0; });
+    S.layers = {}; S.converging = false; responseOpen = false;
+    for (const el of ELS) await buildLayer(el);
+    rebuildEngines();
+    if (masterBus) masterBus.gain.setTargetAtTime(project.masterFx.masterVolume, audioCtx.currentTime, 0.05);
+    S.built = true; S.building = false;
+    status('board ready — reveal tiles to layer the music');
+    refresh();
+  }
+
+  // ── Crossfade a layer to its current tier ───────────────────────────────
+  function roleFactor(role, tier) {
+    if (tier <= 0) return 0;
+    const m = ROLE[Math.min(3, tier)];
+    return m[role] != null ? m[role] : (tier >= 3 ? 1 : 0);
+  }
+  function applyLayer(elKey) {
+    const tier = S.tier[elKey], ids = S.layers[elKey] || [];
+    const boost = S.gameState === 'contested' ? 0.15 : S.gameState === 'endgame' ? 0.3 : 0;
+    for (const id of ids) {
+      const t = project.sections['A'].tracks[id];
+      if (!t) continue;
+      let f = roleFactor(t.label, tier);
+      if (f > 0 && ['Kick','Snare','Hat','Arpeggio'].includes(t.label)) f = Math.min(1, f + boost);
+      const target = (t._baseVol || 0.6) * f;
+      if (f > 0 && t.muted) t.muted = false;
+      t.volume = target;
+      const eng = trackEngines[id];
+      if (eng) eng.trackGain.gain.setTargetAtTime(target, audioCtx.currentTime, 0.9);
+      if (f <= 0 && !t.muted) setTimeout(() => {
+        const tt = project.sections['A'].tracks[id];
+        if (tt && roleFactor(tt.label, S.tier[elKey]) <= 0) tt.muted = true;
+      }, 1100);
     }
   }
+  const tierFromTiles = c => c <= 0 ? 0 : c === 1 ? 1 : c <= 4 ? 2 : 3;
 
-  async function toggleEngine() {
-    ensureEngine();
-    if (engine.running) engine.stop(); else await ensureStarted();
+  async function revealTile(elKey) {
+    if (!S.built) await buildBoard();
+    if (!isPlaying) startPlayback(0);
+    S.tiles[elKey] = Math.min(TOTAL_TILES, S.tiles[elKey] + 1);
+    S.tier[elKey] = tierFromTiles(S.tiles[elKey]);
+    applyLayer(elKey);
+    status(byKey[elKey].name + ' revealed → tier ' + S.tier[elKey]);
     refresh();
   }
-  async function revealTile(e) {
-    tiles[e] = Math.min(TOTAL, tiles[e] + 1);
-    await ensureStarted();
-    engine.setElementTiles(e, tiles[e], TOTAL);
+
+  // ── §4 scroll accents / response window ─────────────────────────────────
+  function bump(elKey, mult, ms) {
+    for (const id of (S.layers[elKey] || [])) {
+      const t = project.sections['A'].tracks[id], eng = trackEngines[id];
+      if (!t || !eng || t.muted) continue;
+      const base = t.volume, now = audioCtx.currentTime;
+      eng.trackGain.gain.cancelScheduledValues(now);
+      eng.trackGain.gain.setTargetAtTime(base * mult, now, 0.03);
+      eng.trackGain.gain.setTargetAtTime(base, now + ms / 1000, 0.2);
+    }
+  }
+  function castScroll(elKey) {
+    if (!S.built) return;
+    if (S.tier[elKey] === 0) { S.tier[elKey] = 1; applyLayer(elKey); }
+    bump(elKey, 1.8, 220); status('scroll cast: ' + byKey[elKey].name); refresh();
+  }
+  function counterScroll(elKey) {
+    if (!S.built) return;
+    bump(elKey, 2.1, 320);
+    if (responseOpen) setTimeout(() => resolveResponse(elKey), 360);
+    status('counter!');
+  }
+  function openResponse() {
+    if (!S.built || !masterBus) return;
+    responseOpen = true; heldVol = project.masterFx.masterVolume;
+    masterBus.gain.setTargetAtTime(heldVol * 0.6, audioCtx.currentTime, 0.15);
+    status('response window — held breath'); refresh();
+  }
+  function resolveResponse(elKey) {
+    if (!responseOpen || !masterBus) return;
+    responseOpen = false;
+    masterBus.gain.setTargetAtTime(heldVol ?? project.masterFx.masterVolume, audioCtx.currentTime + 0.05, 0.25);
+    if (elKey) { if (S.tier[elKey] === 0) { S.tier[elKey] = 2; applyLayer(elKey); } bump(elKey, 1.6, 500); status('response: ' + byKey[elKey].name); }
+    else status('no response — tension released');
     refresh();
   }
-  function resetBoard() {
-    ELS.forEach(e => tiles[e] = 0);
-    currentState = 'peaceful';
-    if (engine) engine.reset();
-    refresh();
+
+  // ── §5 game state · §6 convergence · turn ───────────────────────────────
+  function setGameState(s) { S.gameState = s; ELS.forEach(e => applyLayer(e.key)); status('game state: ' + s); refresh(); }
+  function turn() {
+    if (!masterBus) return;
+    const v = project.masterFx.masterVolume, now = audioCtx.currentTime;
+    masterBus.gain.cancelScheduledValues(now);
+    masterBus.gain.setValueAtTime(masterBus.gain.value, now);
+    masterBus.gain.linearRampToValueAtTime(v * 0.8, now + 0.06);
+    masterBus.gain.linearRampToValueAtTime(responseOpen ? v * 0.6 : v, now + 0.4);
+    status('turn');
   }
   function dominant() {
-    const max = Math.max(0, ...ELS.map(e => tiles[e]));
-    return max <= 0 ? [] : ELS.filter(e => tiles[e] >= Math.max(1, max * 0.6));
+    const max = Math.max(0, ...ELS.map(e => S.tiles[e.key]));
+    return max <= 0 ? ELS.map(e => e.key) : ELS.filter(e => S.tiles[e.key] >= Math.max(1, max * 0.6)).map(e => e.key);
+  }
+  function convergence() {
+    if (!S.built) return;
+    const dom = dominant();
+    S.converging = true; S.gameState = 'endgame';
+    ELS.forEach(e => { S.tier[e.key] = dom.includes(e.key) ? 3 : 0; applyLayer(e.key); });
+    status('convergence: ' + dom.map(k => byKey[k].name).join(' · ')); refresh();
   }
 
-  // Hook buttons.
-  document.getElementById('ga-toggle').addEventListener('click', toggleEngine);
-  document.getElementById('ga-reset').addEventListener('click', resetBoard);
-  document.getElementById('ga-cast').addEventListener('click', async () => { await ensureStarted(); engine.castAccent(castSel.value); });
-  document.getElementById('ga-counter').addEventListener('click', async () => { await ensureStarted(); engine.counterAccent(respSel.value); refresh(); });
-  document.getElementById('ga-window').addEventListener('click', async () => { await ensureStarted(); engine.openResponseWindow(); refresh(); });
-  document.getElementById('ga-respond').addEventListener('click', async () => { await ensureStarted(); engine.resolveResponseWindow(respSel.value); refresh(); });
-  document.getElementById('ga-noresp').addEventListener('click', async () => { await ensureStarted(); engine.resolveResponseWindow(null); refresh(); });
-  document.getElementById('ga-turn').addEventListener('click', async () => { await ensureStarted(); engine.triggerEvent('turn-change'); });
-  document.getElementById('ga-converge').addEventListener('click', async () => { await ensureStarted(); engine.triggerConvergence(dominant()); refresh(); });
-  document.querySelectorAll('.ga-state').forEach(b => b.addEventListener('click', async () => {
-    currentState = b.dataset.state; await ensureStarted(); engine.setGameState(currentState); refresh();
-  }));
+  // ── UI ──────────────────────────────────────────────────────────────────
+  function buildUI() {
+    const castSel = $('ga-cast-el'), respSel = $('ga-resp-el');
+    if (!castSel) return;
+    ELS.forEach(e => {
+      const o = document.createElement('option'); o.value = e.key; o.textContent = e.emoji + ' ' + e.name;
+      castSel.appendChild(o); respSel.appendChild(o.cloneNode(true));
+    });
+    castSel.value = 'fire'; respSel.value = 'void';
+
+    const board = $('godaigo-board');
+    ELS.forEach(e => {
+      const c = document.createElement('div'); c.className = 'gb-cell'; c.dataset.el = e.key;
+      c.innerHTML = '<div class="gb-emoji">' + e.emoji + '</div><div class="gb-name">' + e.name + '</div>'
+        + '<div class="gb-meter"><div class="gb-fill"></div></div><div class="gb-tier">—</div>';
+      c.title = 'Reveal a ' + e.name + ' tile';
+      c.addEventListener('click', () => revealTile(e.key));
+      board.appendChild(c);
+    });
+
+    $('ga-toggle').addEventListener('click', async () => {
+      if (!S.built) { await buildBoard(); startPlayback(0); }
+      else if (isPlaying) stopPlayback();
+      else startPlayback(0);
+      refresh();
+    });
+    $('ga-reset').addEventListener('click', async () => { stopPlayback(); S.built = false; await buildBoard(); });
+    $('ga-cast').addEventListener('click', () => castScroll($('ga-cast-el').value));
+    $('ga-counter').addEventListener('click', () => counterScroll($('ga-resp-el').value));
+    $('ga-window').addEventListener('click', openResponse);
+    $('ga-respond').addEventListener('click', () => resolveResponse($('ga-resp-el').value));
+    $('ga-noresp').addEventListener('click', () => resolveResponse(null));
+    $('ga-turn').addEventListener('click', turn);
+    $('ga-converge').addEventListener('click', convergence);
+    document.querySelectorAll('.ga-state').forEach(b => b.addEventListener('click', () => setGameState(b.dataset.state)));
+    refresh();
+  }
 
   function refresh() {
-    const running = !!(engine && engine.running);
-    const tg = document.getElementById('ga-toggle');
-    tg.classList.toggle('on', running); tg.textContent = running ? '⏹ Engine' : '▶ Engine';
-    document.querySelectorAll('#ga-reveal .tile').forEach(b => {
-      const e = b.dataset.el, tier = tierFor(tiles[e]);
-      b.querySelector('.ct').textContent = tiles[e];
-      b.classList.remove('tier1', 'tier2', 'tier3');
-      if (tier > 0) b.classList.add('tier' + tier);
+    const tg = $('ga-toggle'); if (!tg) return;
+    tg.classList.toggle('on', isPlaying);
+    tg.textContent = isPlaying ? '⏹ Stop' : '▶ Play';
+    document.querySelectorAll('.gb-cell').forEach(c => {
+      const k = c.dataset.el, tier = S.tier[k];
+      c.querySelector('.gb-fill').style.width = (S.tiles[k] / TOTAL_TILES * 100) + '%';
+      c.querySelector('.gb-tier').textContent = tier ? ('T' + tier + ' · ' + S.tiles[k] + ' tiles') : '—';
+      c.classList.remove('tier1','tier2','tier3'); if (tier) c.classList.add('tier' + tier);
+      c.style.boxShadow = tier >= 3 ? '0 0 16px rgba(154,139,224,.55)' : tier >= 2 ? '0 0 10px rgba(111,127,207,.35)' : 'none';
     });
-    document.querySelectorAll('.ga-state').forEach(b => b.classList.toggle('on', b.dataset.state === currentState));
-    const st = engine ? engine.getState() : null;
-    document.getElementById('ga-window').classList.toggle('on', !!(st && st.response));
-    document.getElementById('ga-converge').classList.toggle('on', !!(st && st.converging));
-    updateReadout();
-  }
-  function updateReadout() {
-    const ro = document.getElementById('ga-readout');
-    if (!engine || !engine.running) { ro.textContent = 'engine off'; return; }
-    const st = engine.getState();
-    const live = ELS.filter(e => st.stems[e].tier > 0).map(e => EMOJI[e] + 'T' + st.stems[e].tier);
-    ro.textContent = (live.length ? live.join(' ') : 'silent')
-      + (st.response ? ' · ⏳window' : '') + (st.converging ? ' · ✦converged' : '') + ' · ' + st.gameState;
+    document.querySelectorAll('.ga-state').forEach(b => b.classList.toggle('on', b.dataset.state === S.gameState));
+    $('ga-window').classList.toggle('on', responseOpen);
+    $('ga-converge').classList.toggle('on', S.converging);
+    const live = ELS.filter(e => S.tier[e.key] > 0).map(e => e.emoji + 'T' + S.tier[e.key]);
+    $('ga-readout').textContent = (S.built ? (live.length ? live.join(' ') : 'silent') : 'idle')
+      + (responseOpen ? ' · ⏳' : '') + (S.converging ? ' · ✦' : '') + ' · ' + S.gameState;
   }
 
-  setInterval(() => { if (engine && engine.running) updateReadout(); }, 500);
-  refresh();
+  setInterval(refresh, 600);
+  if (document.readyState !== 'loading') buildUI();
+  else document.addEventListener('DOMContentLoaded', buildUI);
 })();
 </script>
+
 </body>
 </html>
