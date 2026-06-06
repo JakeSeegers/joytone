@@ -5098,22 +5098,20 @@ init();
   const LOOP_BARS = 8, TOTAL_TILES = 7;
 
   // Per-role gain factor by tier (§2): solo → section → foreground.
+  // Element layers are HARMONIC only — chords/bass/melody/arp. They ride on top
+  // of the shared base drum track; they do not bring their own kits (§2).
   const ROLE = {
-    1: { 'Chords':0.5 },
-    2: { 'Chords':1, 'Bass Drone':1, 'Bass Line':1, 'Melody':0.8, 'Kick':0.7, 'Snare':0.6, 'Hat':0.5 },
-    3: { 'Chords':1, 'Bass Drone':1, 'Bass Line':1, 'Melody':1, 'Arpeggio':1, 'Kick':1, 'Snare':1, 'Hat':1 },
+    1: { 'Chords':0.6 },
+    2: { 'Chords':1, 'Bass Drone':1, 'Bass Line':1, 'Melody':0.85 },
+    3: { 'Chords':1, 'Bass Drone':1, 'Bass Line':1, 'Melody':1, 'Arpeggio':1 },
   };
-  // Each element brings its own drum loop, picked from the library by feel/density.
-  const DRUM_PLAN = {
-    earth:    { feel:'halftime',   density:null },
-    water:    { feel:'groovy',     density:null },
-    fire:     { feel:'4otf',       density:null },
-    wind:     { feel:'percussion', density:'medium' },
-    void:     { feel:'percussion', density:'empty' },
-    catacomb: { feel:'halftime',   density:null },
-  };
+  // The base drum track IS the foundation (§1): a single always-on groove from
+  // the percussion library whose density follows the board. Empty → Medium →
+  // Full is the rhythmic version of the tier ladder.
+  const BASE_DENSITY = ['empty', 'medium', 'full'];
 
-  const S = { built:false, building:false, tiles:{}, tier:{}, gameState:'peaceful', converging:false, layers:{} };
+  const S = { built:false, building:false, tiles:{}, tier:{}, gameState:'peaceful', converging:false,
+              layers:{}, base:{ empty:[], medium:[], full:[] }, baseDensity:'empty' };
   ELS.forEach(e => { S.tiles[e.key]=0; S.tier[e.key]=0; });
   let responseOpen = false, heldVol = null;
 
@@ -5160,10 +5158,9 @@ init();
           roles = expandChordRoles(proj.sections['A'].tracks, profileFor([el.lib])) || [];
         }
       }
-    } catch(e){ /* drums-only fallback */ }
-    const drums = await drumTracksFor(DRUM_PLAN[el.key]);
+    } catch(e){ /* silent layer if the library fetch fails */ }
     const sec = project.sections['A'], ids = [];
-    for (const t of [...roles, ...drums]) {
+    for (const t of roles) {
       t.element = el.key;
       t._baseVol = t.volume;
       t.volume = 0;
@@ -5172,6 +5169,50 @@ init();
       ids.push(t.id);
     }
     S.layers[el.key] = ids;
+  }
+
+  // ── Base drum foundation (§1) ───────────────────────────────────────────
+  // Load one percussion groove at each density. 'empty' is audible from the
+  // start (the spine); applyBase() crossfades to denser grooves as the board
+  // fills. The base is never gated behind a tile reveal.
+  async function buildBase() {
+    S.base = { empty:[], medium:[], full:[] };
+    const sec = project.sections['A'];
+    for (const d of BASE_DENSITY) {
+      const tracks = await drumTracksFor({ feel:'percussion', density:d });
+      for (const t of tracks) {
+        t.element = '__base__';
+        t._baseVol = t.volume;
+        t.volume = (d === 'empty') ? t._baseVol : 0;   // empty spine audible immediately
+        t.muted = false;                                // always scheduled → phase-locked crossfades
+        sec.tracks[t.id] = t;
+        S.base[d].push(t.id);
+      }
+    }
+    S.baseDensity = 'empty';
+  }
+
+  // Density follows overall board fullness + game state.
+  function computeBaseDensity() {
+    const total = ELS.reduce((a, e) => a + S.tiles[e.key], 0);
+    let lvl = total >= 8 ? 2 : total >= 3 ? 1 : 0;
+    if (S.gameState === 'contested') lvl = Math.max(lvl, 1);
+    if (S.gameState === 'endgame' || S.converging) lvl = 2;
+    return BASE_DENSITY[lvl];
+  }
+  function applyBase() {
+    const want = computeBaseDensity();
+    S.baseDensity = want;
+    for (const d of BASE_DENSITY) {
+      const on = d === want;
+      for (const id of (S.base[d] || [])) {
+        const t = project.sections['A'].tracks[id], eng = trackEngines[id];
+        if (!t) continue;
+        const target = on ? (t._baseVol || 0.8) : 0;
+        t.volume = target;
+        if (eng) eng.trackGain.gain.setTargetAtTime(target, audioCtx.currentTime, 0.8);
+      }
+    }
   }
 
   async function buildBoard() {
@@ -5186,11 +5227,13 @@ init();
     project.sectionOrder = ['A']; activeSectionId = 'A';
     ELS.forEach(e => { S.tiles[e.key]=0; S.tier[e.key]=0; });
     S.layers = {}; S.converging = false; responseOpen = false;
+    await buildBase();                       // foundation first — the drum spine
     for (const el of ELS) await buildLayer(el);
     rebuildEngines();
+    applyBase();                             // empty groove audible from the start
     if (masterBus) masterBus.gain.setTargetAtTime(project.masterFx.masterVolume, audioCtx.currentTime, 0.05);
     S.built = true; S.building = false;
-    status('board ready — reveal tiles to layer the music');
+    status('board ready — drums roll; reveal tiles to layer harmony on top');
     refresh();
   }
 
@@ -5207,7 +5250,7 @@ init();
       const t = project.sections['A'].tracks[id];
       if (!t) continue;
       let f = roleFactor(t.label, tier);
-      if (f > 0 && ['Kick','Snare','Hat','Arpeggio'].includes(t.label)) f = Math.min(1, f + boost);
+      if (f > 0 && t.label === 'Arpeggio') f = Math.min(1, f + boost);
       const target = (t._baseVol || 0.6) * f;
       if (f > 0 && t.muted) t.muted = false;
       t.volume = target;
@@ -5227,6 +5270,7 @@ init();
     S.tiles[elKey] = Math.min(TOTAL_TILES, S.tiles[elKey] + 1);
     S.tier[elKey] = tierFromTiles(S.tiles[elKey]);
     applyLayer(elKey);
+    applyBase();                              // board got fuller → maybe thicken the drums
     status(byKey[elKey].name + ' revealed → tier ' + S.tier[elKey]);
     refresh();
   }
@@ -5269,7 +5313,7 @@ init();
   }
 
   // ── §5 game state · §6 convergence · turn ───────────────────────────────
-  function setGameState(s) { S.gameState = s; ELS.forEach(e => applyLayer(e.key)); status('game state: ' + s); refresh(); }
+  function setGameState(s) { S.gameState = s; ELS.forEach(e => applyLayer(e.key)); applyBase(); status('game state: ' + s); refresh(); }
   function turn() {
     if (!masterBus) return;
     const v = project.masterFx.masterVolume, now = audioCtx.currentTime;
@@ -5288,6 +5332,7 @@ init();
     const dom = dominant();
     S.converging = true; S.gameState = 'endgame';
     ELS.forEach(e => { S.tier[e.key] = dom.includes(e.key) ? 3 : 0; applyLayer(e.key); });
+    applyBase();                              // full kit for the finale
     status('convergence: ' + dom.map(k => byKey[k].name).join(' · ')); refresh();
   }
 
@@ -5344,7 +5389,8 @@ init();
     $('ga-window').classList.toggle('on', responseOpen);
     $('ga-converge').classList.toggle('on', S.converging);
     const live = ELS.filter(e => S.tier[e.key] > 0).map(e => e.emoji + 'T' + S.tier[e.key]);
-    $('ga-readout').textContent = (S.built ? (live.length ? live.join(' ') : 'silent') : 'idle')
+    const harmony = S.built ? (live.length ? live.join(' ') : 'no harmony yet') : 'idle';
+    $('ga-readout').textContent = (S.built ? '🥁 ' + S.baseDensity + ' · ' : '') + harmony
       + (responseOpen ? ' · ⏳' : '') + (S.converging ? ' · ✦' : '') + ' · ' + S.gameState;
   }
 
