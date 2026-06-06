@@ -5128,6 +5128,16 @@ init();
     const pool = drumManifest.filter(e => e.feel === feel && (density ? e.density === density : !e.density));
     return pool.length ? pool[(Math.random() * pool.length) | 0] : null;
   }
+  // Map any GM percussion note → kick/snare/hat. These library loops live on
+  // channel 0 and use melodic-percussion notes (congas/bongos 60-75), so the
+  // generator's auto drum-detection misses them. We know they're drum files
+  // (deck:"drums"), so we classify every note ourselves.
+  function drumInstForNote(n) {
+    if (n === 35 || n === 36) return 'kick';
+    if (n === 42 || n === 44 || n === 46 || (n >= 49 && n <= 59)) return 'hat'; // hats + cymbals
+    if (n >= 68) return 'hat';                                                   // shakers/clave/triangle…
+    return 'snare';                                                             // snare, toms, congas, bongos
+  }
   async function drumTracksFor(plan) {
     const entry = await pickDrum(plan.feel, plan.density);
     if (!entry) return [];
@@ -5135,12 +5145,26 @@ init();
       const r = await fetch(encodeURI(entry.path));
       if (!r.ok) return [];
       const proj = parseMidi(await r.arrayBuffer());
-      const LBL = { kick:'Kick', snare:'Snare', hat:'Hat' };
+      const groups = { kick:[], snare:[], hat:[] };
+      const CANON = { kick:36, snare:38, hat:42 };
+      for (const t of Object.values(proj.sections['A'].tracks))
+        for (const n of t.notes) {
+          const inst = drumInstForNote(n.midiNote);
+          groups[inst].push({ ...n, id: uid(), midiNote: CANON[inst] });
+        }
+      const META = {
+        kick:  { label:'Kick',  vol:0.95, color:'#ff8a65' },
+        snare: { label:'Snare', vol:0.80, color:'#a5d6a7' },
+        hat:   { label:'Hat',   vol:0.62, color:'#80deea' },
+      };
       const out = [];
-      for (const t of Object.values(proj.sections['A'].tracks)) {
-        if (!['kick','snare','hat'].includes(t.instrument)) continue;
-        t.label = LBL[t.instrument];
-        out.push(t);
+      for (const inst of ['kick','snare','hat']) {
+        if (!groups[inst].length) continue;
+        out.push({
+          id: uid(), label: META[inst].label, instrument: inst, color: META[inst].color,
+          volume: META[inst].vol, muted: false, soloed: false, reverbSend: 0.05,
+          notes: groups[inst], effects: { ...DEFAULT_FX(), ...(INST_FILTER[inst] || {}) },
+        });
       }
       return out;
     } catch(e){ return []; }
