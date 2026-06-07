@@ -5189,23 +5189,30 @@ init();
     };
   }
 
-  // ── An element's role tracks: its library MIDI run through the Unflip
-  // voicing pipeline (soft-guitar bassline w/ pitch correction, soft synth
-  // melody, soft organ chords). All five roles are generated so the tile
-  // ladder can unlock them later. ─────────────────────────────────────────
-  async function elementRoleProtos(el) {
+  // ── Pick distinct library clips for an element so A/B/C differ ────────────
+  function elementClips(el, n) {
+    const pool = (typeof ELEMENTAL_CHORDS !== 'undefined' ? ELEMENTAL_CHORDS : [])
+      .filter(c => Array.isArray(c.e) && c.e.includes(el.lib));
+    const shuffled = [...pool].sort(() => Math.random() - 0.5);
+    const out = [];
+    for (let i = 0; i < n; i++) out.push(shuffled.length ? shuffled[i % shuffled.length] : null);
+    return out;   // entries only repeat if the element's pool is smaller than n
+  }
+
+  // ── One clip → its five role tracks, voiced with the soft Unflip mp3s
+  // (soft-guitar bassline + pitch correction, soft synth melody, organ chords).
+  // Each call re-rolls its own random bass groove, so B/C differ from A. ──────
+  async function rolesFromEntry(entry, style) {
     let roles = [];
+    if (!entry) return roles;
     try {
-      const entry = pickRandomElemental(el.lib, null);
-      if (entry) {
-        const r = await fetch(encodeURI(entry.p));
-        if (r.ok) {
-          const proj = parseMidi(await r.arrayBuffer());
-          roles = expandChordRoles(proj.sections['A'].tracks,
-            { chordStyle: 'stab', arp: 'light', melody: true, bassLine: true, bass: true }) || [];
-        }
+      const r = await fetch(encodeURI(entry.p));
+      if (r.ok) {
+        const proj = parseMidi(await r.arrayBuffer());
+        roles = expandChordRoles(proj.sections['A'].tracks,
+          { chordStyle: style, arp: 'light', melody: true, bassLine: true, bass: true }) || [];
       }
-    } catch(e){ /* element stays silent if its fetch fails */ }
+    } catch(e){ /* silent if the fetch fails */ }
     for (const t of roles) {
       const p = (typeof TILE_TRACK_FX !== 'undefined') && TILE_TRACK_FX[t.label];
       if (p) {
@@ -5231,11 +5238,20 @@ init();
     return sec;
   }
 
-  // ── Discovering an element appends its ABAC movement — the song gets longer
+  // ── Discovering an element appends its ABAC movement — the song gets longer.
+  // A repeats; B and C are *different* progressions (each with its own random
+  // bass groove), so the movement is a real song form, not one looping clip.
+  const SECTION_STYLE = { A: 'stab', B: 'pump', C: 'stab' };
   async function addMovement(el) {
-    const protos = await elementRoleProtos(el);
+    const [clipA, clipB, clipC] = elementClips(el, 3);
+    const protoByType = {
+      A: await rolesFromEntry(clipA, SECTION_STYLE.A),
+      B: await rolesFromEntry(clipB, SECTION_STYLE.B),
+      C: await rolesFromEntry(clipC, SECTION_STYLE.C),
+    };
     const ids = []; S.layers[el.key] = [];
     for (const stype of MOVE_SECTIONS) {
+      const protos = protoByType[stype] || [];
       const id = 'GO' + (_seq++);
       const sec = drumSection(id);                       // constant drums under every section
       for (const proto of protos) {
