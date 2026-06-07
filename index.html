@@ -5095,25 +5095,32 @@ init();
     { key:'catacomb', lib:'Catacomb', emoji:'⚰️', name:'Catacomb' },
   ];
   const byKey = Object.fromEntries(ELS.map(e => [e.key, e]));
-  const LOOP_BARS = 8, TOTAL_TILES = 7;
+  const TOTAL_TILES = 7;
+  const SEC_BARS = 4;                          // one library clip per section
+  const MOVE_SECTIONS = ['A', 'B', 'A', 'C'];  // each discovered element = an ABAC movement
 
-  // Per-role gain factor by tier (§2): solo → section → foreground.
-  // Element layers are HARMONIC only — chords/bass/melody/arp. They ride on top
-  // of the shared base drum track; they do not bring their own kits (§2).
-  const ROLE = {
-    1: { 'Chords':0.6 },
-    2: { 'Chords':1, 'Bass Drone':1, 'Bass Line':1, 'Melody':0.85 },
-    3: { 'Chords':1, 'Bass Drone':1, 'Bass Line':1, 'Melody':1, 'Arpeggio':1 },
+  // Roles unlocked by how many tiles of an element have been revealed:
+  // 1 → bass + drone, 2 → +melody, 4 → +chords, 5 → +arpeggio.
+  function rolesUnlocked(c) {
+    const s = new Set();
+    if (c >= 1) { s.add('Bass Drone'); s.add('Bass Line'); }
+    if (c >= 2) s.add('Melody');
+    if (c >= 4) s.add('Chords');
+    if (c >= 5) s.add('Arpeggio');
+    return s;
+  }
+  // Which roles may sound in which ABAC section type — keeps chords & arps
+  // sparse (C only) instead of "annoying" everywhere.
+  const COVERAGE = {
+    A: new Set(['Bass Drone', 'Bass Line']),
+    B: new Set(['Bass Drone', 'Bass Line', 'Melody']),
+    C: new Set(['Bass Drone', 'Bass Line', 'Melody', 'Chords', 'Arpeggio']),
   };
-  // The base drum track IS the foundation (§1): a single always-on groove from
-  // the percussion library whose density follows the board. Empty → Medium →
-  // Full is the rhythmic version of the tier ladder.
-  const BASE_DENSITY = ['empty', 'medium', 'full'];
 
-  const S = { built:false, building:false, tiles:{}, tier:{}, gameState:'peaceful', converging:false,
-              layers:{}, base:{ empty:[], medium:[], full:[] }, baseDensity:'empty' };
-  ELS.forEach(e => { S.tiles[e.key]=0; S.tier[e.key]=0; });
-  let responseOpen = false, heldVol = null;
+  const S = { built:false, building:false, tiles:{}, gameState:'peaceful', converging:false,
+              movements:{}, layers:{}, drumProto:[], introId:null, conv:new Set() };
+  ELS.forEach(e => { S.tiles[e.key] = 0; });
+  let _seq = 0, responseOpen = false, heldVol = null;
 
   const $ = id => document.getElementById(id);
   const status = m => { try { if (typeof setStatus === 'function') setStatus('🎴 ' + m); } catch(e){} };
@@ -5170,143 +5177,136 @@ init();
     } catch(e){ return []; }
   }
 
-  // ── Build one element layer from the MIDI libraries ─────────────────────
-  // ── Build one section of the arrangement ────────────────────────────────
-  // A section = the base drum groove (all three densities) + the six harmonic
-  // element layers, each freshly drawn from the libraries so every section in
-  // the sequence is a variation. Tracks are registered into S.base / S.layers
-  // as live references so the conductor can ride their gains across sections.
-  const CHORD_STYLES = ['stab', 'pump', 'held', 'power'];
-  async function buildSectionInto(sec, idx) {
-    for (const d of BASE_DENSITY) {                       // base drum foundation (§1)
-      for (const t of await drumTracksFor({ feel:'percussion', density:d })) {
-        t.element = '__base__'; t._baseVol = t.volume; t.volume = 0; t.muted = false;
-        sec.tracks[t.id] = t; S.base[d].push(t);
+  // ── A proto track, cloned per section (each section needs its own copies) ─
+  function cloneTrack(p) {
+    return {
+      id: uid(), label: p.label, instrument: p.instrument, color: p.color || '#8a86a8',
+      volume: p.volume, muted: !!p.muted, soloed: false,
+      reverbSend: p.reverbSend == null ? 0.1 : p.reverbSend,
+      notes: (p.notes || []).map(n => ({ ...n, id: uid() })),
+      effects: { ...(p.effects || DEFAULT_FX()) },
+      sample: p.sample ? { ...p.sample } : undefined,
+    };
+  }
+
+  // ── An element's role tracks: its library MIDI run through the Unflip
+  // voicing pipeline (soft-guitar bassline w/ pitch correction, soft synth
+  // melody, soft organ chords). All five roles are generated so the tile
+  // ladder can unlock them later. ─────────────────────────────────────────
+  async function elementRoleProtos(el) {
+    let roles = [];
+    try {
+      const entry = pickRandomElemental(el.lib, null);
+      if (entry) {
+        const r = await fetch(encodeURI(entry.p));
+        if (r.ok) {
+          const proj = parseMidi(await r.arrayBuffer());
+          roles = expandChordRoles(proj.sections['A'].tracks,
+            { chordStyle: 'stab', arp: 'light', melody: true, bassLine: true, bass: true }) || [];
+        }
+      }
+    } catch(e){ /* element stays silent if its fetch fails */ }
+    for (const t of roles) {
+      const p = (typeof TILE_TRACK_FX !== 'undefined') && TILE_TRACK_FX[t.label];
+      if (p) {
+        t.instrument = p.instrument; t.volume = p.volume; t.reverbSend = p.reverbSend;
+        t.effects = { ...DEFAULT_FX(), ...(p.fx || {}) };
+        if (p.sample) t.sample = { ...p.sample };   // soft guitar / synth mp3 + pitch correction
       }
     }
-    for (const el of ELS) {                                // element harmonic layers
-      let roles = [];
-      try {
-        const entry = pickRandomElemental(el.lib, null);
-        if (entry) {
-          const r = await fetch(encodeURI(entry.p));
-          if (r.ok) {
-            const proj = parseMidi(await r.arrayBuffer());
-            const opt = Object.assign({}, profileFor([el.lib]), { chordStyle: CHORD_STYLES[idx % CHORD_STYLES.length] });
-            roles = expandChordRoles(proj.sections['A'].tracks, opt) || [];
-          }
-        }
-      } catch(e){ /* silent layer if a fetch fails */ }
-      for (const t of roles) {
-        t.element = el.key; t._baseVol = t.volume; t.volume = 0; t.muted = true;
+    return roles;
+  }
+
+  // ── The constant drum foundation: one randomly appropriate groove that
+  // plays under every section and never changes. ──────────────────────────
+  async function buildDrums() {
+    const feel = ['4otf', 'groovy', 'halftime'][(Math.random() * 3) | 0];
+    let tracks = await drumTracksFor({ feel, density: null });
+    if (!tracks.length) tracks = await drumTracksFor({ feel: 'percussion', density: 'medium' });
+    S.drumProto = tracks;
+  }
+  function drumSection(id) {
+    const sec = makeSection(id); sec.lengthBars = SEC_BARS;
+    for (const dp of S.drumProto) { const t = cloneTrack(dp); t.muted = false; sec.tracks[t.id] = t; }
+    return sec;
+  }
+
+  // ── Discovering an element appends its ABAC movement — the song gets longer
+  async function addMovement(el) {
+    const protos = await elementRoleProtos(el);
+    const ids = []; S.layers[el.key] = [];
+    for (const stype of MOVE_SECTIONS) {
+      const id = 'GO' + (_seq++);
+      const sec = drumSection(id);                       // constant drums under every section
+      for (const proto of protos) {
+        const t = cloneTrack(proto);
+        t.element = el.key; t.role = proto.label; t.sectionType = stype;
+        t._baseVol = proto.volume; t.volume = 0; t.muted = true;
         sec.tracks[t.id] = t; S.layers[el.key].push(t);
       }
+      project.sections[id] = sec; project.sectionOrder.push(id); ids.push(id);
     }
+    S.movements[el.key] = ids;
+    // Movement sections are never the "active" (edited) section, so their sample
+    // buffers won't auto-load. Preload them — this also runs the pitch-correction
+    // (estimateSampleRootMidi) for the soft-guitar/synth/organ mp3 voices.
+    for (const t of S.layers[el.key])
+      if (typeof SAMPLE_INSTRUMENT_BY_ID !== 'undefined' && SAMPLE_INSTRUMENT_BY_ID[t.instrument])
+        ensureSampleInstrumentLoaded(t);
+    applyElement(el.key);
   }
 
-  // Base density follows overall board fullness + game state (§5).
-  function computeBaseDensity() {
-    const total = ELS.reduce((a, e) => a + S.tiles[e.key], 0);
-    let lvl = total >= 8 ? 2 : total >= 3 ? 1 : 0;
-    if (S.gameState === 'contested') lvl = Math.max(lvl, 1);
-    if (S.gameState === 'endgame' || S.converging) lvl = 2;
-    return BASE_DENSITY[lvl];
+  // Show/hide an element's role tracks per its tile count + ABAC coverage.
+  function audible(elKey, t) {
+    if (S.converging && S.conv.has(elKey)) return true;     // finale: full part everywhere
+    return rolesUnlocked(S.tiles[elKey]).has(t.role) && (COVERAGE[t.sectionType] || COVERAGE.A).has(t.role);
   }
-  // Crossfade the base to the wanted density across every section.
-  function applyBase() {
-    const want = computeBaseDensity();
-    S.baseDensity = want;
-    for (const d of BASE_DENSITY) {
-      const on = d === want;
-      for (const t of (S.base[d] || [])) {
-        const target = on ? (t._baseVol || 0.8) : 0;
-        t.volume = target;
-        const eng = trackEngines[t.id];
-        if (eng) eng.trackGain.gain.setTargetAtTime(target, audioCtx.currentTime, 0.8);
-      }
-    }
-  }
-
-  // ── Horizontal growth: the arrangement lengthens as the board fills ──────
-  const MAX_SECTIONS = 6, TILES_PER_SECTION = 3;
-  let _seq = 0;
-  function resetLayerStore() {
-    S.base = { empty:[], medium:[], full:[] };
-    S.layers = {}; ELS.forEach(e => S.layers[e.key] = []);
-  }
-  async function addSection() {
-    const idx = project.sectionOrder.length;
-    const id = 'GO' + (_seq++);
-    const sec = makeSection(id); sec.lengthBars = LOOP_BARS;
-    project.sections[id] = sec;
-    await buildSectionInto(sec, idx);
-    project.sectionOrder.push(id);
-    applyBase(); ELS.forEach(e => applyLayer(e.key));     // new section inherits current state
-  }
-  async function growToFit() {
-    const total = ELS.reduce((a, e) => a + S.tiles[e.key], 0);
-    const target = Math.min(MAX_SECTIONS, 1 + Math.floor(total / TILES_PER_SECTION));
-    while (project.sectionOrder.length < target) {
-      await addSection();
-      status('arrangement extended → ' + project.sectionOrder.length + ' sections ('
-        + (project.sectionOrder.length * LOOP_BARS) + ' bars)');
+  function applyElement(elKey) {
+    for (const t of (S.layers[elKey] || [])) {
+      const on = audible(elKey, t);
+      const target = on ? (t._baseVol || 0.6) : 0;
+      if (on && t.muted) t.muted = false;
+      t.volume = target;
+      const eng = trackEngines[t.id];
+      if (eng) eng.trackGain.gain.setTargetAtTime(target, audioCtx.currentTime, 0.9);
+      if (!on && !t.muted) setTimeout(() => { if (!audible(elKey, t)) t.muted = true; }, 1100);
     }
   }
 
   async function buildBoard() {
     if (S.building) return;
     S.building = true;
-    status('dealing board — generating the opening section from the libraries…');
+    status('new game — laying down a drum groove…');
     await ensureAudio();
     project = makeProject();
-    project.tempo = clamp(+$('bpm-input').value || 84, 20, 400);
+    project.tempo = clamp(+$('bpm-input').value || 92, 20, 400);
     project.sections = {}; project.sectionOrder = [];
-    ELS.forEach(e => { S.tiles[e.key]=0; S.tier[e.key]=0; });
-    S.converging = false; responseOpen = false; _seq = 0;
-    resetLayerStore();
-    await addSection();                       // opening section
+    ELS.forEach(e => { S.tiles[e.key] = 0; });
+    S.movements = {}; S.layers = {}; S.converging = false; S.conv = new Set(); responseOpen = false; _seq = 0;
+    await buildDrums();
+    const introId = 'GO' + (_seq++);
+    project.sections[introId] = drumSection(introId);   // drums roll before any element is found
+    project.sectionOrder.push(introId); S.introId = introId;
     activeSectionId = project.sectionOrder[0];
     rebuildEngines();
-    applyBase();                              // empty groove audible from the start
     if (masterBus) masterBus.gain.setTargetAtTime(project.masterFx.masterVolume, audioCtx.currentTime, 0.05);
     S.built = true; S.building = false;
-    status('board ready — drums roll; reveal tiles to grow & layer the piece');
+    status('drums rolling — reveal a tile to bring in an element');
     refresh();
   }
-
-  // ── Crossfade a layer to its current tier ───────────────────────────────
-  function roleFactor(role, tier) {
-    if (tier <= 0) return 0;
-    const m = ROLE[Math.min(3, tier)];
-    return m[role] != null ? m[role] : (tier >= 3 ? 1 : 0);
-  }
-  function applyLayer(elKey) {
-    const tier = S.tier[elKey];
-    const boost = S.gameState === 'contested' ? 0.15 : S.gameState === 'endgame' ? 0.3 : 0;
-    for (const t of (S.layers[elKey] || [])) {           // every copy across all sections
-      let f = roleFactor(t.label, tier);
-      if (f > 0 && t.label === 'Arpeggio') f = Math.min(1, f + boost);
-      const target = (t._baseVol || 0.6) * f;
-      if (f > 0 && t.muted) t.muted = false;
-      t.volume = target;
-      const eng = trackEngines[t.id];
-      if (eng) eng.trackGain.gain.setTargetAtTime(target, audioCtx.currentTime, 0.9);
-      if (f <= 0 && !t.muted) setTimeout(() => {
-        if (roleFactor(t.label, S.tier[elKey]) <= 0) t.muted = true;
-      }, 1100);
-    }
-  }
-  const tierFromTiles = c => c <= 0 ? 0 : c === 1 ? 1 : c <= 4 ? 2 : 3;
 
   async function revealTile(elKey) {
     if (!S.built) await buildBoard();
     if (!isPlaying) startPlayback(0);
     S.tiles[elKey] = Math.min(TOTAL_TILES, S.tiles[elKey] + 1);
-    S.tier[elKey] = tierFromTiles(S.tiles[elKey]);
-    await growToFit();                        // board fuller → lengthen the arrangement
-    applyLayer(elKey);
-    applyBase();                              // …and maybe thicken the drums
-    status(byKey[elKey].name + ' revealed → tier ' + S.tier[elKey]);
+    if (!S.movements[elKey]) {
+      status(byKey[elKey].name + ' discovered — adding its movement…');
+      await addMovement(byKey[elKey]);
+      status(byKey[elKey].name + ' movement added — the piece is now ' + project.sectionOrder.length + ' sections');
+    } else {
+      applyElement(elKey);
+      status(byKey[elKey].name + ' deepened → ' + S.tiles[elKey] + ' tiles (' + [...rolesUnlocked(S.tiles[elKey])].length + ' roles)');
+    }
     refresh();
   }
 
@@ -5323,7 +5323,7 @@ init();
   }
   function castScroll(elKey) {
     if (!S.built) return;
-    if (S.tier[elKey] === 0) { S.tier[elKey] = 1; applyLayer(elKey); }
+    if (!S.movements[elKey]) { status('cast: ' + byKey[elKey].name + ' not discovered yet'); return; }
     bump(elKey, 1.8, 220); status('scroll cast: ' + byKey[elKey].name); refresh();
   }
   function counterScroll(elKey) {
@@ -5342,13 +5342,13 @@ init();
     if (!responseOpen || !masterBus) return;
     responseOpen = false;
     masterBus.gain.setTargetAtTime(heldVol ?? project.masterFx.masterVolume, audioCtx.currentTime + 0.05, 0.25);
-    if (elKey) { if (S.tier[elKey] === 0) { S.tier[elKey] = 2; applyLayer(elKey); } bump(elKey, 1.6, 500); status('response: ' + byKey[elKey].name); }
+    if (elKey && S.movements[elKey]) { bump(elKey, 1.6, 500); status('response: ' + byKey[elKey].name); }
     else status('no response — tension released');
     refresh();
   }
 
   // ── §5 game state · §6 convergence · turn ───────────────────────────────
-  function setGameState(s) { S.gameState = s; ELS.forEach(e => applyLayer(e.key)); applyBase(); status('game state: ' + s); refresh(); }
+  function setGameState(s) { S.gameState = s; status('game state: ' + s); refresh(); }
   function turn() {
     if (!masterBus) return;
     const v = project.masterFx.masterVolume, now = audioCtx.currentTime;
@@ -5364,11 +5364,10 @@ init();
   }
   function convergence() {
     if (!S.built) return;
-    const dom = dominant();
-    S.converging = true; S.gameState = 'endgame';
-    ELS.forEach(e => { S.tier[e.key] = dom.includes(e.key) ? 3 : 0; applyLayer(e.key); });
-    applyBase();                              // full kit for the finale
-    status('convergence: ' + dom.map(k => byKey[k].name).join(' · ')); refresh();
+    const dom = dominant().filter(k => S.movements[k]);
+    S.converging = true; S.conv = new Set(dom); S.gameState = 'endgame';
+    ELS.forEach(e => { if (S.movements[e.key]) applyElement(e.key); });  // dominant → full part
+    status('convergence: ' + (dom.length ? dom.map(k => byKey[k].name).join(' · ') : '—')); refresh();
   }
 
   // ── UI ──────────────────────────────────────────────────────────────────
@@ -5409,24 +5408,26 @@ init();
     refresh();
   }
 
+  const ROLE_ABBR = [['Bass Line','B'],['Bass Drone','D'],['Melody','M'],['Chords','C'],['Arpeggio','A']];
   function refresh() {
     const tg = $('ga-toggle'); if (!tg) return;
     tg.classList.toggle('on', isPlaying);
     tg.textContent = isPlaying ? '⏹ Stop' : '▶ Play';
     document.querySelectorAll('.gb-cell').forEach(c => {
-      const k = c.dataset.el, tier = S.tier[k];
-      c.querySelector('.gb-fill').style.width = (S.tiles[k] / TOTAL_TILES * 100) + '%';
-      c.querySelector('.gb-tier').textContent = tier ? ('T' + tier + ' · ' + S.tiles[k] + ' tiles') : '—';
-      c.classList.remove('tier1','tier2','tier3'); if (tier) c.classList.add('tier' + tier);
-      c.style.boxShadow = tier >= 3 ? '0 0 16px rgba(154,139,224,.55)' : tier >= 2 ? '0 0 10px rgba(111,127,207,.35)' : 'none';
+      const k = c.dataset.el, n = S.tiles[k], disc = !!S.movements[k];
+      const roles = ROLE_ABBR.filter(([full]) => rolesUnlocked(n).has(full)).map(([, ab]) => ab).join('');
+      c.querySelector('.gb-fill').style.width = (n / TOTAL_TILES * 100) + '%';
+      c.querySelector('.gb-tier').textContent = disc ? (n + ' · ' + (roles || '–')) : (n ? n + ' tiles' : '—');
+      c.classList.remove('tier1','tier2','tier3');
+      if (disc) c.classList.add(n >= 4 ? 'tier3' : n >= 2 ? 'tier2' : 'tier1');
+      c.style.boxShadow = disc ? (n >= 4 ? '0 0 14px rgba(154,139,224,.5)' : '0 0 8px rgba(111,127,207,.3)') : 'none';
     });
     document.querySelectorAll('.ga-state').forEach(b => b.classList.toggle('on', b.dataset.state === S.gameState));
     $('ga-window').classList.toggle('on', responseOpen);
     $('ga-converge').classList.toggle('on', S.converging);
-    const live = ELS.filter(e => S.tier[e.key] > 0).map(e => e.emoji + 'T' + S.tier[e.key]);
-    const harmony = S.built ? (live.length ? live.join(' ') : 'no harmony yet') : 'idle';
-    const len = S.built && project.sectionOrder ? ' · ▦' + project.sectionOrder.length : '';
-    $('ga-readout').textContent = (S.built ? '🥁 ' + S.baseDensity + ' · ' : '') + harmony + len
+    const secs = S.built && project.sectionOrder ? project.sectionOrder.length : 0;
+    const moves = Object.keys(S.movements || {}).length;
+    $('ga-readout').textContent = (S.built ? ('🥁 groove · ▦' + secs + ' · ' + moves + ' element' + (moves === 1 ? '' : 's')) : 'idle')
       + (responseOpen ? ' · ⏳' : '') + (S.converging ? ' · ✦' : '') + ' · ' + S.gameState;
   }
 
