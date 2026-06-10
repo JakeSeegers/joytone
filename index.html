@@ -5210,12 +5210,13 @@ init();
   const MOVE_SECTIONS = ['A', 'B', 'A', 'C'];  // each discovered element = an ABAC movement
 
   // Roles unlocked by how many tiles of an element have been revealed:
-  // 1 → pad + bass + drone, 2 → +melody, 4 → +chords, 5 → +arpeggio.
+  // 1 → pad + bass + melody (one click = an audible musical identity),
+  // 3 → +chords, 5 → +arpeggio. The ABAC coverage below still shapes the
+  // arc, so even a fully unlocked element isn't playing everything at once.
   function rolesUnlocked(c) {
     const s = new Set();
-    if (c >= 1) { s.add('Pad'); s.add('Bass Drone'); s.add('Bass Line'); }
-    if (c >= 2) s.add('Melody');
-    if (c >= 4) s.add('Chords');
+    if (c >= 1) { s.add('Pad'); s.add('Bass Drone'); s.add('Bass Line'); s.add('Melody'); }
+    if (c >= 3) s.add('Chords');
     if (c >= 5) s.add('Arpeggio');
     return s;
   }
@@ -5549,8 +5550,8 @@ init();
       c.querySelector('.gb-fill').style.width = (n / TOTAL_TILES * 100) + '%';
       c.querySelector('.gb-tier').textContent = disc ? (n + ' · ' + (roles || '–')) : (n ? n + ' tiles' : '—');
       c.classList.remove('tier1','tier2','tier3');
-      if (disc) c.classList.add(n >= 4 ? 'tier3' : n >= 2 ? 'tier2' : 'tier1');
-      c.style.boxShadow = disc ? (n >= 4 ? '0 0 14px rgba(154,139,224,.5)' : '0 0 8px rgba(111,127,207,.3)') : 'none';
+      if (disc) c.classList.add(n >= 5 ? 'tier3' : n >= 3 ? 'tier2' : 'tier1');
+      c.style.boxShadow = disc ? (n >= 3 ? '0 0 14px rgba(154,139,224,.5)' : '0 0 8px rgba(111,127,207,.3)') : 'none';
     });
     document.querySelectorAll('.ga-state').forEach(b => b.classList.toggle('on', b.dataset.state === S.gameState));
     $('ga-window').classList.toggle('on', responseOpen);
