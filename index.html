@@ -3029,19 +3029,26 @@ function tameBassMidi(low) { let b = low - 12; while (b < 36) b += 12; return b;
 
 const SCALE_IVLS = { major:[0,2,4,5,7,9,11], minor:[0,2,3,5,7,8,10] };
 
-// Simplified Krumhansl-Schmuckler: score each possible root against
-// the major key profile weighted by note duration.
-function detectKeyPc(chords) {
-  const PROF = [6.35,2.23,3.48,2.33,4.38,4.09,2.52,5.19,2.39,3.66,2.29,2.88];
+// Simplified Krumhansl-Schmuckler over both modes: score each possible root
+// against the major AND minor key profiles weighted by note duration, so
+// minor/modal progressions get a scale that actually fits them.
+const KS_PROFILES = {
+  major: [6.35,2.23,3.48,2.33,4.38,4.09,2.52,5.19,2.39,3.66,2.29,2.88],
+  minor: [6.33,2.68,3.52,5.38,2.60,3.53,2.54,4.75,3.98,2.69,3.34,3.17],
+};
+function detectKey(chords) {
   const w = new Array(12).fill(0);
   for (const ch of chords)
     for (const n of ch) w[((n.midiNote%12)+12)%12] += n.duration;
-  let best=0, bestS=-Infinity;
-  for (let r=0; r<12; r++) {
-    let s=0; for (let i=0; i<12; i++) s += w[i]*PROF[(i-r+12)%12];
-    if (s>bestS) { bestS=s; best=r; }
+  let best = { root:0, mode:'major' }, bestS = -Infinity;
+  for (const mode of ['major','minor']) {
+    const prof = KS_PROFILES[mode];
+    for (let r=0; r<12; r++) {
+      let s=0; for (let i=0; i<12; i++) s += w[i]*prof[(i-r+12)%12];
+      if (s>bestS) { bestS=s; best={root:r, mode}; }
+    }
   }
-  return best; // pitch class 0–11
+  return best;
 }
 
 function melScalePool(rootPc, mode, lo, hi) {
@@ -3058,76 +3065,123 @@ function melChordPool(chord, lo, hi) {
   return out;
 }
 
-function melWPick(items, weights) {
-  let total=weights.reduce((a,b)=>a+b,0), r=Math.random()*total;
-  for (let i=0;i<items.length;i++) { r-=weights[i]; if(r<=0) return items[i]; }
-  return items[items.length-1];
-}
+// Motif-driven melody:
+//  • one short rhythmic cell repeats for the whole phrase — only the final
+//    chord gets a cadence rhythm (short approach + long resolving note)
+//  • pitches move mostly stepwise along the scale, following an arch contour
+//    that peaks ~2/3 of the way through the progression
+//  • strong beats and held notes snap to chord tones; short weak-beat notes
+//    stay as stepwise passing tones
+//  • each repeat of the cell mutates at most one interval, so the phrase
+//    evolves without wandering
 
-// Rhythm shapes per chord — offsets + durations in beats (assumes 4-beat chord).
-// Scaled to actual chord length at generation time.
-const MEL_RHYTHMS = [
-  [{o:0,d:.9},{o:1,d:.9},{o:2,d:.9},{o:3,d:.9}],              // 4 quarters
-  [{o:0,d:.9},{o:1,d:.4},{o:1.5,d:.4},{o:2,d:.9},{o:3,d:.9}], // Q E E Q Q
-  [{o:0,d:.9},{o:1,d:.9},{o:2,d:.4},{o:2.5,d:.4},{o:3,d:.9}], // Q Q E E Q
-  [{o:0,d:.9},{o:1,d:.9},{o:2,d:.9}],                          // 3 quarters + rest
-  [{o:0,d:.4},{o:.5,d:.4},{o:1,d:.9},{o:2,d:.9},{o:3,d:.9}],  // E E Q Q Q
+// Rhythmic cells — offsets + durations in beats over a 4-beat chord
+// (scaled to actual chord length at generation time). All leave a little
+// air before the next downbeat so the line can breathe.
+const MEL_MOTIFS = [
+  [{o:0,d:.9},{o:1,d:.45},{o:1.5,d:.45},{o:2,d:1.7}],   // Q EE H — sing-song
+  [{o:0,d:.9},{o:1,d:.9},{o:2,d:.45},{o:2.5,d:1.2}],    // Q Q E + pushed long
+  [{o:0,d:1.35},{o:1.5,d:.45},{o:2,d:.9},{o:3,d:.85}],  // dotted-Q E Q Q
+  [{o:0,d:.45},{o:.5,d:.45},{o:1,d:.9},{o:2,d:1.7}],    // EE Q H — front-loaded
+  [{o:0,d:.9},{o:1.5,d:.45},{o:2,d:.9},{o:3,d:.85}],    // Q ·E Q Q — light syncopation
 ];
+const MEL_CADENCE = [{o:0,d:.9},{o:1,d:2.6}];           // approach + long resolution
 
 function generateMelodyNotes(chords, rootPc, mode='major') {
-  const LO=67, HI=86; // G4 – D6: sits above typical chord voicings
-  const scale  = melScalePool(rootPc, mode, LO, HI);
-  if (!scale.length) return [];
+  const LO=67, HI=84, CENTER=74; // G4–C6, sits above the chord voicing
+  const scale = melScalePool(rootPc, mode, LO, HI);
+  if (!scale.length || !chords.length) return [];
 
-  const notes=[];
-  // Start on tonic closest to C5 (midi 72)
-  let prev = scale.reduce((b,n)=>Math.abs(n-72)<Math.abs(b-72)?n:b, scale[0]);
-  let motif=[];
+  const N = chords.length;
+  const motif = MEL_MOTIFS[(Math.random()*MEL_MOTIFS.length)|0];
 
-  for (let ci=0; ci<chords.length; ci++) {
-    const chord    = chords[ci];
-    const cStart   = chord[0].beatStart;
-    const cLen     = ci<chords.length-1
-      ? chords[ci+1][0].beatStart - cStart
-      : Math.max(chord[0].duration, 2);
-    const cTones   = melChordPool(chord, LO, HI);
-    const isLast   = ci===chords.length-1;
+  // Base pitch shape of the cell: scale-step intervals between successive
+  // notes — mostly single steps, at most one third, so the line is singable.
+  const baseShape = [];
+  let leapUsed = false;
+  for (let i=1; i<motif.length; i++) {
+    const r = Math.random();
+    if (!leapUsed && r < .18) { baseShape.push(Math.random()<.5?-2:2); leapUsed = true; }
+    else if (r < .56) baseShape.push(-1);
+    else if (r < .94) baseShape.push(1);
+    else baseShape.push(0);
+  }
 
-    // Vary rhythm shape per chord (use chord index + small random offset)
-    const shapeIdx = (ci + (Math.random()<.4?1:0)) % MEL_RHYTHMS.length;
-    const shape    = MEL_RHYTHMS[shapeIdx];
-    const bs       = cLen/4; // beat scale: maps shape's 0-4 range to actual chord length
+  const scaleIdx = m => {
+    let bi=0, bd=Infinity;
+    for (let i=0;i<scale.length;i++){const d=Math.abs(scale[i]-m); if(d<bd){bd=d;bi=i;}}
+    return bi;
+  };
+  const nearestIn = (pool, target) =>
+    pool.reduce((b,n)=>Math.abs(n-target)<Math.abs(b-target)?n:b, pool[0]);
 
-    for (let ri=0; ri<shape.length; ri++) {
-      const {o,d}    = shape[ri];
-      const beatStart = cStart + o*bs;
-      const duration  = d*bs;
-      const strong    = o<0.5 || (o>=2&&o<2.5);
-      const phraseEnd = isLast && ri===shape.length-1;
+  const peakIdx = Math.max(1, Math.round((N-1)*0.62));
+  const notes = [];
+  let prev = CENTER;
 
-      const pool = (strong||phraseEnd) ? (cTones.length?cTones:scale) : scale;
+  for (let ci=0; ci<N; ci++) {
+    const chord  = chords[ci];
+    const cStart = chord[0].beatStart;
+    const cLen   = ci<N-1 ? chords[ci+1][0].beatStart - cStart
+                          : Math.max(chord[0].duration, 2);
+    const bs     = cLen/4;
+    const cTones = melChordPool(chord, LO, HI);
+    const pool   = cTones.length ? cTones : scale;
 
-      const weights = pool.map(n=>{
-        const dist=Math.abs(n-prev);
-        let w = dist===0?1.5 : dist<=2?5 : dist<=4?3 : dist<=7?1 : 0.2;
-        if (ci>=Math.floor(chords.length/2) && motif[ri]!==undefined)
-          w += Math.abs(n-motif[ri])<=2 ? 1.5 : 0;
-        if (phraseEnd && cTones.includes(n)) w*=4;
-        return w;
-      });
+    if (ci===N-1 && N>1) {
+      // Cadence: land on the chord root by step and let it ring.
+      const rootMidi = chord.reduce((m,n)=>n.midiNote<m?n.midiNote:m, chord[0].midiNote);
+      const rootPool = pool.filter(n=>((n-rootMidi)%12+12)%12===0);
+      const final    = nearestIn(rootPool.length?rootPool:pool, prev);
+      const fi       = scaleIdx(final);
+      const approach = scale[clamp(fi + (prev>=final?1:-1), 0, scale.length-1)];
+      notes.push({ id:uid(), beatStart:cStart, duration:MEL_CADENCE[0].d*bs,
+        midiNote:approach, velocity:74+((Math.random()*8)|0) });
+      notes.push({ id:uid(), beatStart:cStart+MEL_CADENCE[1].o*bs,
+        duration:Math.min(MEL_CADENCE[1].d, 4-MEL_CADENCE[1].o)*bs,
+        midiNote:final, velocity:84+((Math.random()*8)|0) });
+      prev = final;
+      continue;
+    }
 
-      let note = melWPick(pool, weights);
-      // Clamp leaps > 7 semitones
-      if (Math.abs(note-prev)>7 && pool.length>1)
-        note = pool.reduce((b,n)=>Math.abs(n-prev)<Math.abs(b-prev)?n:b, pool[0]);
+    // Arch contour: aim the cell's anchor at a target that rises to the
+    // peak chord and falls back toward the center afterwards.
+    const lift = ci<=peakIdx ? 7*ci/peakIdx : 7*(N-1-ci)/Math.max(1, N-1-peakIdx);
+    const contourTarget = CENTER + Math.round(lift);
 
+    // Repeat the cell, mutating at most one interval per pass.
+    const shape = [...baseShape];
+    if (ci>0 && shape.length && Math.random()<.4) {
+      const j = (Math.random()*shape.length)|0;
+      shape[j] = clamp(shape[j] + (Math.random()<.5?-1:1), -2, 2);
+    }
+
+    // Anchor on a chord tone near both the previous note and the contour.
+    let anchor = pool[0], bcost = Infinity;
+    for (const t of pool) {
+      const cost = Math.abs(t-prev) + 0.8*Math.abs(t-contourTarget);
+      if (cost<bcost) { bcost=cost; anchor=t; }
+    }
+
+    let cur = anchor, idx = scaleIdx(anchor);
+    for (let k=0; k<motif.length; k++) {
+      const {o,d} = motif[k];
+      if (o*bs >= cLen-0.05) break;
+      if (k>0) { idx = clamp(idx + shape[k-1], 0, scale.length-1); cur = scale[idx]; }
+      const strong = o<0.5 || (o>=2 && o<2.5);
+      // Chord tones own the strong beats and anything held long; short
+      // weak-beat notes pass freely through the scale.
+      if ((strong || d>=0.8) && cTones.length && !cTones.includes(cur)) {
+        cur = nearestIn(cTones, cur);
+        idx = scaleIdx(cur);
+      }
       notes.push({
-        id:uid(), beatStart, duration,
-        midiNote:note,
-        velocity: strong ? 76+Math.floor(Math.random()*16) : 60+Math.floor(Math.random()*14)
+        id:uid(), beatStart:cStart+o*bs,
+        duration:Math.min(d*bs, cLen-o*bs)*0.97,
+        midiNote:cur,
+        velocity: strong ? 78+((Math.random()*12)|0) : 62+((Math.random()*10)|0)
       });
-      if (motif.length<shape.length) motif.push(note);
-      prev=note;
+      prev = cur;
     }
   }
   return notes;
@@ -3320,6 +3374,12 @@ function pickRandomElement() {
 // Programmatic kick / snare / hat notes for one section
 function generateDrumSection(mod, lengthBars) {
   const kick=[], snare=[], hat=[];
+  // Hat pattern fixed for the whole section by density tier — a consistent
+  // groove every bar, not random 8th-note dropouts.
+  const hatSlots = mod.hat >= .8  ? [0,1,2,3,4,5,6,7]   // straight 8ths
+                 : mod.hat >= .45 ? [1,3,5,7]           // offbeat 8ths
+                 : mod.hat >= .15 ? [2,6]               // beats 2 & 4 only
+                 : [];
   for (let bar=0; bar<lengthBars; bar++) {
     const bs = bar*4;
     // Kick: 0 + 2 always, optional syncopated +2.5 in C sections
@@ -3330,11 +3390,11 @@ function generateDrumSection(mod, lengthBars) {
     for (const b of [1,3])
       snare.push({ id:uid(), beatStart:bs+b, duration:.35, midiNote:38,
         velocity: clamp(Math.round(90*mod.vel + Math.random()*6-3), 40, 127) });
-    // Hats: 8th-note grid, filtered by density
-    for (let h=0; h<8; h++) {
-      if (Math.random() > mod.hat) continue;
+    // Hats: accent on-beat slots, soften offbeats, small humanization
+    for (const h of hatSlots) {
+      const base = h%2===0 ? 56 : 44;
       hat.push({ id:uid(), beatStart:bs+h*.5, duration:.18, midiNote:42,
-        velocity: clamp(Math.round((46+Math.random()*24)*mod.vel), 25, 127) });
+        velocity: clamp(Math.round((base+Math.random()*10)*mod.vel), 25, 127) });
     }
   }
   return { kick, snare, hat };
@@ -3744,6 +3804,19 @@ function expandChordRoles(incomingTracks, opts={}) {
     if (style === 'held')
       return allNotes.map(n => ({...n, id:uid()}));
 
+    // Stab rhythm patterns — one is chosen per section and repeated for every
+    // chord so the comping is a consistent motif, not a new rhythm per bar.
+    const STAB_PATTERNS = [
+      [{b:0,dur:.90,vel:90},{b:2,dur:.45,vel:72}],                              // standard: 0 + 2
+      [{b:0,dur:.90,vel:88},{b:2,dur:.90,vel:80}],                              // two equal hits
+      [{b:0,dur:.45,vel:88},{b:.5,dur:.40,vel:70},{b:2,dur:.90,vel:84}],       // quick double then 2
+      [{b:0,dur:1.8,vel:86},{b:2.5,dur:.42,vel:68}],                            // long hit + offbeat pickup
+      [{b:0,dur:.90,vel:90},{b:1.5,dur:.42,vel:66},{b:3,dur:.42,vel:74}],      // 3 hits with syncopation
+      [{b:0,dur:.45,vel:88},{b:1,dur:.90,vel:76},{b:3,dur:.45,vel:72}],        // pushed 2nd hit
+      [{b:0,dur:.90,vel:85},{b:2,dur:.45,vel:70},{b:3.5,dur:.35,vel:65}],      // 2 + anticipation
+    ];
+    const stabIdx = (Math.random()*STAB_PATTERNS.length)|0;
+
     const voiced = [];
     for (let ci = 0; ci < chords.length; ci++) {
       const chord  = chords[ci];
@@ -3756,18 +3829,11 @@ function expandChordRoles(incomingTracks, opts={}) {
         ({ id:uid(), beatStart:cStart+beat, duration:dur, midiNote:midi, velocity:vel });
 
       if (style === 'stab') {
-        // Cycle through rhythmic stab patterns so adjacent chords feel different.
-        // Each pattern is a list of { b: beat-offset, dur: duration, vel: velocity }.
-        const STAB_PATTERNS = [
-          [{b:0,dur:.90,vel:90},{b:2,dur:.45,vel:72}],                              // standard: 0 + 2
-          [{b:0,dur:.90,vel:88},{b:2,dur:.90,vel:80}],                              // two equal hits
-          [{b:0,dur:.45,vel:88},{b:.5,dur:.40,vel:70},{b:2,dur:.90,vel:84}],       // quick double then 2
-          [{b:0,dur:1.8,vel:86},{b:2.5,dur:.42,vel:68}],                            // long hit + offbeat pickup
-          [{b:0,dur:.90,vel:90},{b:1.5,dur:.42,vel:66},{b:3,dur:.42,vel:74}],      // 3 hits with syncopation
-          [{b:0,dur:.45,vel:88},{b:1,dur:.90,vel:76},{b:3,dur:.45,vel:72}],        // pushed 2nd hit
-          [{b:0,dur:.90,vel:85},{b:2,dur:.45,vel:70},{b:3.5,dur:.35,vel:65}],      // 2 + anticipation
-        ];
-        const hits = STAB_PATTERNS[ci % STAB_PATTERNS.length].filter(h => h.b < cLen);
+        // Final chord: a single sustained hit so the phrase cadences
+        // instead of stabbing right through the loop point.
+        const hits = (ci === chords.length-1
+          ? [{b:0, dur:Math.min(3.4, cLen*0.9), vel:86}]
+          : STAB_PATTERNS[stabIdx]).filter(h => h.b < cLen);
         for (const h of hits)
           for (const n of sorted) voiced.push(mk(h.b, h.dur, n.midiNote, h.vel));
 
@@ -3812,35 +3878,42 @@ function expandChordRoles(incomingTracks, opts={}) {
       velocity:Math.min((lowest.velocity||80)+10, 120) };
   }) : [];
 
+  // Detected key (root + major/minor mode) shared by bass line and melody.
+  const key = detectKey(chords);
+
   // Bass line — rhythmic groove that locks to kick hits when available.
-  const bassRootPc   = detectKeyPc(chords);
   const bassLineNotes = o.bassLine
-    ? generateBasslineNotes(chords, bassRootPc, 'major')
+    ? generateBasslineNotes(chords, key.root, key.mode)
     : [];
 
   // Arpeggio — cycling chord tones; 'light' = 8ths, 'full' = 16ths, 'off' = none.
+  // One contour (rising or ping-pong) per section, kept within an octave of
+  // the chord voicing so it doesn't collide with the melody's register.
   const arpNotes = [];
   if (o.arp && o.arp !== 'off') {
-    const step = o.arp === 'light' ? 0.5 : o.arp === 'turbo' ? 0.125 : 0.25;
+    const step   = o.arp === 'light' ? 0.5 : o.arp === 'turbo' ? 0.125 : 0.25;
+    const upDown = o.arpMode !== 'chip' && Math.random() < 0.5;
     for (let i = 0; i < chords.length; i++) {
       const chord  = chords[i];
       const start  = chord[0].beatStart;
       const end    = i < chords.length-1 ? chords[i+1][0].beatStart
                                          : start + chord[0].duration;
       const tones  = [...chord].sort((a,b) => a.midiNote - b.midiNote);
-      // chip mode: 3-note strict ascending cell (root-3rd-5th only, no octave jump)
-      // standard:  full chord + octave-up copy for wider range
+      // chip mode: 3-note strict ascending cell (root-3rd-5th only)
+      // standard:  chord tones + octave root — one octave cell
       const pool = o.arpMode === 'chip'
-        ? tones.slice(0, 3) // just root, 3rd, 5th
-        : [...tones, ...tones.map(n => ({...n, midiNote: n.midiNote+12}))];
+        ? tones.slice(0, 3).map(n => n.midiNote)
+        : [...tones.map(n => n.midiNote), tones[0].midiNote + 12];
+      const cyc = upDown ? Math.max(1, pool.length*2 - 2) : pool.length;
       let beat = start, idx = 0;
       while (beat < end - 0.01) {
-        const src = pool[idx % pool.length];
+        const k = idx % cyc;
+        const onBeat = ((beat - start) % 1) < 0.01;
         arpNotes.push({
           id: uid(), beatStart: beat,
           duration: step * 0.85,
-          midiNote: src.midiNote,
-          velocity: 65 + Math.round(Math.sin(idx * 1.2) * 15 + 15)
+          midiNote: pool[upDown && k >= pool.length ? cyc - k : k],
+          velocity: (onBeat ? 80 : 64) + ((Math.random()*8)|0)
         });
         beat += step; idx++;
       }
@@ -3856,10 +3929,7 @@ function expandChordRoles(incomingTracks, opts={}) {
 
   // Melody — rule-based single voice above the chords
   const melodyNotes = [];
-  if (o.melody) {
-    const rootPc = detectKeyPc(chords);
-    melodyNotes.push(...generateMelodyNotes(chords, rootPc));
-  }
+  if (o.melody) melodyNotes.push(...generateMelodyNotes(chords, key.root, key.mode));
 
   const out = [ mkTrack('Chords',    o.chordInst,    chordNotes,    o.chordColor,    o.chordVol,    o.chordReverb,    o.chordFx||{}) ];
   if (o.bass     && bassNotes.length)     out.push(mkTrack('Bass Drone', o.bassInst,     bassNotes,     o.bassColor,     o.bassVol,     o.bassReverb));
