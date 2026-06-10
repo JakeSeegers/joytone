@@ -59,13 +59,9 @@ html,body{height:100%;overflow:hidden;background:#111;color:#ccc;font:13px/1.4 '
 #btn-elemental-auto{padding:2px 9px;font-size:11px}
 #btn-elemental-auto.on{background:#3a2d5a;border-color:#8877cc;color:#e8e0ff}
 
-/* ── Pure adaptive player: hide the DAW editing surface ───────────────
-   The generation + audio engine underneath stays fully intact (the
-   conductor drives it); only the editor chrome is hidden. */
-#master-strip, #section-strip, #elemental-strip, #daw-main,
-#btn-undo, #btn-export-midi, #btn-import-midi, #btn-export-wav,
-#btn-library, #btn-gen-chords, #btn-tile, #btn-load-demo,
-#transport .sep { display:none !important; }
+/* ── Adaptive player + visible editor ─────────────────────────────────
+   The conductor board sits above the DAW editing surface; all settings
+   (transport, master strip, sections, tracks, piano roll) stay visible. */
 
 /* Godaigo conductor strip */
 #godaigo-strip{
@@ -89,15 +85,15 @@ html,body{height:100%;overflow:hidden;background:#111;color:#ccc;font:13px/1.4 '
 #godaigo-strip select{background:#1c1c28;color:#cdc7e0;border:1px solid #444;border-radius:3px;font-size:11px;padding:1px 3px}
 #ga-readout{color:#888;font-size:10px;font-family:monospace;margin-left:auto;white-space:nowrap}
 
-/* Conductor takes the full window once the editor is hidden */
-#godaigo-stage{flex:1;display:flex;align-items:center;justify-content:center;
-  background:radial-gradient(ellipse at center,#15151f 0%,#0c0c12 100%);overflow:hidden;min-height:0}
-#godaigo-board{display:grid;grid-template-columns:repeat(3,150px);gap:14px}
-.gb-cell{border:1px solid #2a2a35;border-radius:8px;padding:12px 10px;background:#14141c;
+/* Conductor board: compact strip so the DAW below keeps most of the window */
+#godaigo-stage{flex:0 0 auto;display:flex;align-items:center;justify-content:center;
+  padding:8px 0;background:radial-gradient(ellipse at center,#15151f 0%,#0c0c12 100%);overflow:hidden}
+#godaigo-board{display:grid;grid-template-columns:repeat(6,120px);gap:10px}
+.gb-cell{border:1px solid #2a2a35;border-radius:8px;padding:8px 8px;background:#14141c;
   display:flex;flex-direction:column;align-items:center;gap:6px;transition:box-shadow .4s,border-color .4s,background .4s;cursor:pointer;user-select:none}
 .gb-cell:hover{background:#181824}
-.gb-cell .gb-emoji{font-size:26px}
-.gb-cell .gb-name{font-size:12px;font-weight:600;letter-spacing:.5px}
+.gb-cell .gb-emoji{font-size:20px}
+.gb-cell .gb-name{font-size:11px;font-weight:600;letter-spacing:.5px}
 .gb-cell .gb-meter{width:100%;height:5px;border-radius:3px;background:#222;overflow:hidden}
 .gb-cell .gb-fill{height:100%;width:0;background:#6f7fcf;transition:width .5s}
 .gb-cell .gb-tier{font-size:10px;color:#777;font-family:monospace}
@@ -636,7 +632,7 @@ const INST_FILTER = {
 const DEFAULT_MASTER_FX = () => ({
   compThreshold:-18, compRatio:6, compMakeup:0,
   bassGain:0, bassFreq:120,
-  masterVolume:0.7,
+  masterVolume:0.6,
   hissLevel:0.004,
   derezBits:16, derezRate:1.0, derezMix:0.0,
 });
@@ -942,14 +938,16 @@ async function ensureAudio() {
   sharedReverb.connect(reverbReturn);
   sharedDelay.connect(delayReturn);
 
-  // Reverb HP filter (prevents mud)
+  // Reverb HP filter (prevents mud) + LP (keeps the tail dark, not ringy)
   const rvHp = audioCtx.createBiquadFilter();
   rvHp.type = 'highpass'; rvHp.frequency.value = 180;
-  reverbReturn.connect(rvHp);
+  const rvLp = audioCtx.createBiquadFilter();
+  rvLp.type = 'lowpass'; rvLp.frequency.value = 4500; rvLp.Q.value = 0.4;
+  reverbReturn.connect(rvHp); rvHp.connect(rvLp);
 
   compressor = audioCtx.createDynamicsCompressor();
   compressor.threshold.value = -18; compressor.ratio.value = 6;
-  compressor.knee.value = 8; compressor.attack.value = 0.003; compressor.release.value = 0.15;
+  compressor.knee.value = 8; compressor.attack.value = 0.012; compressor.release.value = 0.28;
 
   outputLimiter = audioCtx.createDynamicsCompressor();
   outputLimiter.threshold.value = -3; outputLimiter.ratio.value = 20;
@@ -964,7 +962,7 @@ async function ensureAudio() {
   bassBoost.frequency.value = project.masterFx.bassFreq;
   bassBoost.gain.value      = project.masterFx.bassGain;
 
-  rvHp.connect(bassBoost);
+  rvLp.connect(bassBoost);
   delayReturn.connect(bassBoost);
   masterBus.connect(bassBoost);
   bassBoost.connect(compressor);
@@ -1246,7 +1244,14 @@ function buildReverbIR(ctx, decay) {
   const buf = ctx.createBuffer(2, len, ctx.sampleRate);
   for (let ch=0;ch<2;ch++) {
     const d = buf.getChannelData(ch);
-    for (let i=0;i<len;i++) d[i] = (Math.random()*2-1) * Math.pow(1-i/len, decay*1.2);
+    // One-pole lowpass over the noise, closing as the tail decays — highs die
+    // faster than lows like a real room, so the verb is soft instead of metallic.
+    let lp = 0;
+    for (let i=0;i<len;i++) {
+      const a = 0.45 - 0.33*(i/len);
+      lp += a * ((Math.random()*2-1) - lp);
+      d[i] = lp * Math.pow(1-i/len, decay*1.2) * 2.2;
+    }
   }
   return buf;
 }
@@ -1488,7 +1493,9 @@ function playSampleNote(track, midiNote, dur, t, dest, velocity=100) {
 
   const g = ctx.createGain();
   const amp = clamp((velocity || 100) / 127, 0, 1) * 0.85;
-  const atk = 0.004, rel = Math.min(0.08, Math.max(0.02, dur * 0.15));
+  // Optional per-track envelope override (slow-attack pads etc.)
+  const atk = Math.min(track.sample?.attack ?? 0.004, dur * 0.6);
+  const rel = track.sample?.release ?? Math.min(0.08, Math.max(0.02, dur * 0.15));
   g.gain.setValueAtTime(0.0001, t);
   g.gain.linearRampToValueAtTime(amp, t + atk);
   g.gain.setValueAtTime(amp, t + Math.max(atk, dur - rel));
@@ -1569,8 +1576,9 @@ function playSustainedSampleNote(track, midiNote, dur, t, dest, velocity=100) {
 
   const g = ctx.createGain();
   const amp = clamp((velocity || 100) / 127, 0, 1) * 0.82;
-  const atk = 0.006;
-  const rel = Math.min(0.16, Math.max(0.04, dur * 0.18));
+  // Optional per-track envelope override (slow-attack pads etc.)
+  const atk = Math.min(track.sample?.attack ?? 0.006, dur * 0.6);
+  const rel = track.sample?.release ?? Math.min(0.16, Math.max(0.04, dur * 0.18));
   g.gain.setValueAtTime(0.0001, t);
   g.gain.linearRampToValueAtTime(amp, t + atk);
   g.gain.setValueAtTime(amp, t + Math.max(atk, dur - rel));
@@ -3198,10 +3206,17 @@ const TILE_TRACK_FX = {
     instrument:'smp_softorgan', volume:0.22, reverbSend:0.35,
     sample:{ name:'Soft Organ', url:'mp3/Single_long_soft_org_%233-1779982642422.mp3',
              rootMidi:71, instrumentId:'smp_softorgan', builtin:true, sustain:true, stretch:false },
-    fx:{ filterType:'lowpass', filterCutoff:1200, filterRes:1.8,
-         delayMix:0.32, delaySync:'1/8D',
-         lfoDepth:0.81, lfoRate:5.2,
-         distDrive:0.06, distMix:0.37 }
+    fx:{ filterType:'lowpass', filterCutoff:1100, filterRes:1.2,
+         delayMix:0.20, delaySync:'1/8D',
+         lfoDepth:0.25, lfoRate:4.2,
+         distDrive:0.06, distMix:0.12 }
+  },
+  // Glue layer: slow-attack calm pad, dark and reverb-y, so the generated
+  // lines above sit in a soundscape instead of standing exposed.
+  'Pad': {
+    instrument:'smp_calmpad1', volume:0.30, reverbSend:0.55,
+    sample:{ sustain:true, stretch:false, attack:0.5, release:1.4 },
+    fx:{ filterType:'lowpass', filterCutoff:900, filterRes:0.4 }
   },
   'Bass Drone': {
     instrument:'bass', volume:0.6, reverbSend:0.06,
@@ -3212,22 +3227,22 @@ const TILE_TRACK_FX = {
     sample:{ name:'Soft Guitar', url:'mp3/Deep_soft%2Cguitar_key_%234-1780181682186.mp3',
              rootMidi:44, instrumentId:'smp_guitar', builtin:true, sustain:true, stretch:false },
     fx:{ filterType:'lowpass', filterCutoff:600, filterRes:0.7,
-         delayMix:0.23, delayTime:0.54, delaySync:'1/8',
-         lfoDepth:0.24, lfoRate:4.3,
-         distDrive:0.18, distMix:0.15 }
+         delayMix:0.18, delayTime:0.54, delaySync:'1/8',
+         lfoDepth:0.20, lfoRate:4.3,
+         distDrive:0.12, distMix:0.10 }
   },
   'Arpeggio': {
-    instrument:'pluck', volume:0.40, reverbSend:0.05,
-    fx:{ filterType:'bandpass', filterCutoff:1500, filterRes:0.5 }
+    instrument:'pluck', volume:0.26, reverbSend:0.12,
+    fx:{ filterType:'lowpass', filterCutoff:1600, filterRes:0.4 }
   },
   'Melody': {
-    instrument:'smp_synth', volume:0.50, reverbSend:0.28,
+    instrument:'smp_synth', volume:0.40, reverbSend:0.32,
     sample:{ name:'Soft Synth', url:'mp3/Deep_soft%2Csynth_key__%233-1780181711331.mp3',
              rootMidi:36, instrumentId:'smp_synth', builtin:true, sustain:false, stretch:false },
-    fx:{ filterType:'lowpass', filterCutoff:1500, filterRes:0.5,
+    fx:{ filterType:'lowpass', filterCutoff:1300, filterRes:0.5,
          delayMix:0.12, delayTime:0.38, delaySync:'1/8D',
-         lfoDepth:0.13, lfoRate:5.7,
-         distDrive:0.71, distMix:0.44 }
+         lfoDepth:0.10, lfoRate:5.7,
+         distDrive:0.15, distMix:0.10 }
   },
 };
 
@@ -3258,7 +3273,7 @@ const ELEMENTS = {
   },
   fire: {
     emoji:'🔥', name:'Fire',  color:'#c62828',
-    tempo:128, rootPc:4,  // E minor — intense, driving
+    tempo:104, rootPc:4,  // E minor — intense but inside the low-arousal tempo zone
     sections:{ intro:'deceptive', A:'deceptive', B:'iiV',       C:'twist'     },
     drums:{
       intro:{ vel:.54, hat:.22, xk:false },
@@ -3330,7 +3345,7 @@ const ELEMENTS = {
   },
   chip: {
     emoji:'👾', name:'Chip',  color:'#1a237e',
-    tempo:140, rootPc:4,  // E minor — fast, arcade
+    tempo:112, rootPc:4,  // E minor — arcade feel without hyperactive tempo
     sections:{ intro:'iiV',      A:'deceptive',  B:'walkdown',  C:'twist'     },
     drums:{
       intro:{ vel:.50, hat:.20, xk:false },
@@ -3545,6 +3560,11 @@ function generateElementalTrack() {
   // ── Refresh everything ─────────────────────────────────────────
   document.getElementById('bpm-input').value = project.tempo;
   if (audioCtx) rebuildEngines();
+  // Preload sampled voices in every generated section, not just the active
+  // one, so later sections don't play their first pass with missing tracks.
+  for (const sec of Object.values(project.sections))
+    for (const t of Object.values(sec.tracks))
+      if (SAMPLE_INSTRUMENT_BY_ID[t.instrument]) ensureSampleInstrumentLoaded(t);
   renderTrackHeaders(); renderSectionUI(); syncMasterStrip();
   PR.scrollBeat=0; PR.gridDirty=true; PR.dirty=true; schedRedraw();
   saveProject();
@@ -3779,8 +3799,9 @@ function expandChordRoles(incomingTracks, opts={}) {
     chordInst:'organ', chordVol:0.7, chordReverb:0.35, chordColor:'#ffb74d', chordFx:{ filterCutoff:1200 },
     bass:true,     bassInst:'bass',    bassVol:0.6,  bassReverb:0.06,  bassColor:'#4db6ac',
     bassLine:true, bassLineInst:'bass', bassLineVol:0.72, bassLineReverb:0.08, bassLineColor:'#81c784',
-    arp:'full',    arpInst:'pluck',    arpVol:0.40,  arpReverb:0.05,   arpColor:'#ff6b6b',
-    melody:true,   melodyInst:'bell',  melodyVol:0.52, melodyReverb:0.28, melodyColor:'#ce93d8',
+    pad:true,      padInst:'synth',    padVol:0.16,  padReverb:0.5,    padColor:'#90a4ae',
+    arp:'full',    arpInst:'pluck',    arpVol:0.32,  arpReverb:0.10,   arpColor:'#ff6b6b',
+    melody:true,   melodyInst:'flute', melodyVol:0.42, melodyReverb:0.30, melodyColor:'#ce93d8',
     kickHits: [],  // { beatStart } array from kick track — locks bass line rhythm to kick
     chordStyle: 'stab', // 'held' | 'stab' | 'pump' | 'power'  — stab is now the default
     arpMode: 'standard', // 'standard' | 'chip'
@@ -3886,6 +3907,23 @@ function expandChordRoles(incomingTracks, opts={}) {
     ? generateBasslineNotes(chords, key.root, key.mode)
     : [];
 
+  // Glue pad — a quiet open fifth (no 3rd) held under each chord. The stable
+  // drone makes the generated lines above it read as intentional, and the
+  // ambiguous voicing can't clash with whatever harmony happens above it.
+  const padNotes = o.pad ? chords.flatMap((chord, i) => {
+    const lowest   = chord.reduce((m,n) => n.midiNote < m.midiNote ? n : m, chord[0]);
+    const nextBeat = i < chords.length-1 ? chords[i+1][0].beatStart
+                                         : lowest.beatStart + lowest.duration;
+    const dur = Math.max(nextBeat - lowest.beatStart, 0.5);
+    let root = lowest.midiNote;
+    while (root < 48) root += 12;
+    while (root > 59) root -= 12;
+    return [
+      { id:uid(), beatStart:lowest.beatStart, duration:dur, midiNote:root,   velocity:52 },
+      { id:uid(), beatStart:lowest.beatStart, duration:dur, midiNote:root+7, velocity:46 },
+    ];
+  }) : [];
+
   // Arpeggio — cycling chord tones; 'light' = 8ths, 'full' = 16ths, 'off' = none.
   // One contour (rising or ping-pong) per section, kept within an octave of
   // the chord voicing so it doesn't collide with the melody's register.
@@ -3932,6 +3970,8 @@ function expandChordRoles(incomingTracks, opts={}) {
   if (o.melody) melodyNotes.push(...generateMelodyNotes(chords, key.root, key.mode));
 
   const out = [ mkTrack('Chords',    o.chordInst,    chordNotes,    o.chordColor,    o.chordVol,    o.chordReverb,    o.chordFx||{}) ];
+  if (o.pad      && padNotes.length)      out.push(mkTrack('Pad',        o.padInst,      padNotes,      o.padColor,      o.padVol,      o.padReverb,
+                                                            { filterType:'lowpass', filterCutoff:1100, filterRes:0.4 }));
   if (o.bass     && bassNotes.length)     out.push(mkTrack('Bass Drone', o.bassInst,     bassNotes,     o.bassColor,     o.bassVol,     o.bassReverb));
   if (o.bassLine && bassLineNotes.length) out.push(mkTrack('Bass Line',  o.bassLineInst, bassLineNotes, o.bassLineColor, o.bassLineVol, o.bassLineReverb));
   if (arpNotes.length)                    out.push(mkTrack('Arpeggio',   o.arpInst,      arpNotes,      o.arpColor,      o.arpVol,      o.arpReverb));
@@ -5170,21 +5210,22 @@ init();
   const MOVE_SECTIONS = ['A', 'B', 'A', 'C'];  // each discovered element = an ABAC movement
 
   // Roles unlocked by how many tiles of an element have been revealed:
-  // 1 → bass + drone, 2 → +melody, 4 → +chords, 5 → +arpeggio.
+  // 1 → pad + bass + drone, 2 → +melody, 4 → +chords, 5 → +arpeggio.
   function rolesUnlocked(c) {
     const s = new Set();
-    if (c >= 1) { s.add('Bass Drone'); s.add('Bass Line'); }
+    if (c >= 1) { s.add('Pad'); s.add('Bass Drone'); s.add('Bass Line'); }
     if (c >= 2) s.add('Melody');
     if (c >= 4) s.add('Chords');
     if (c >= 5) s.add('Arpeggio');
     return s;
   }
   // Which roles may sound in which ABAC section type — keeps chords & arps
-  // sparse (C only) instead of "annoying" everywhere.
+  // sparse (C only) instead of "annoying" everywhere. The glue pad is the one
+  // constant: a soft stable element for the ear to latch onto in every section.
   const COVERAGE = {
-    A: new Set(['Bass Drone', 'Bass Line']),
-    B: new Set(['Bass Drone', 'Bass Line', 'Melody']),
-    C: new Set(['Bass Drone', 'Bass Line', 'Melody', 'Chords', 'Arpeggio']),
+    A: new Set(['Pad', 'Bass Drone', 'Bass Line']),
+    B: new Set(['Pad', 'Bass Drone', 'Bass Line', 'Melody']),
+    C: new Set(['Pad', 'Bass Drone', 'Bass Line', 'Melody', 'Chords', 'Arpeggio']),
   };
 
   const S = { built:false, building:false, tiles:{}, gameState:'peaceful', converging:false,
@@ -5230,9 +5271,9 @@ init();
           groups[inst].push({ ...n, id: uid(), midiNote: CANON[inst] });
         }
       const META = {
-        kick:  { label:'Kick',  vol:0.95, color:'#ff8a65' },
-        snare: { label:'Snare', vol:0.80, color:'#a5d6a7' },
-        hat:   { label:'Hat',   vol:0.62, color:'#80deea' },
+        kick:  { label:'Kick',  vol:0.78, color:'#ff8a65' },
+        snare: { label:'Snare', vol:0.62, color:'#a5d6a7' },
+        hat:   { label:'Hat',   vol:0.48, color:'#80deea' },
       };
       const out = [];
       for (const inst of ['kick','snare','hat']) {
@@ -5365,7 +5406,10 @@ init();
     status('new game — laying down a drum groove…');
     await ensureAudio();
     project = makeProject();
-    project.tempo = clamp(+$('bpm-input').value || 92, 20, 400);
+    // Keep the conductor inside the low-arousal background-music zone
+    // (~70–110 BPM) regardless of what the editor BPM field says.
+    project.tempo = clamp(+$('bpm-input').value || 92, 70, 110);
+    $('bpm-input').value = project.tempo;
     project.sections = {}; project.sectionOrder = [];
     ELS.forEach(e => { S.tiles[e.key] = 0; });
     S.movements = {}; S.layers = {}; S.converging = false; S.conv = new Set(); responseOpen = false; _seq = 0;
@@ -5494,7 +5538,7 @@ init();
     refresh();
   }
 
-  const ROLE_ABBR = [['Bass Line','B'],['Bass Drone','D'],['Melody','M'],['Chords','C'],['Arpeggio','A']];
+  const ROLE_ABBR = [['Pad','P'],['Bass Line','B'],['Bass Drone','D'],['Melody','M'],['Chords','C'],['Arpeggio','A']];
   function refresh() {
     const tg = $('ga-toggle'); if (!tg) return;
     tg.classList.toggle('on', isPlaying);
