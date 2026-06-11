@@ -383,6 +383,7 @@ input[type=range]{cursor:pointer}
     <div class="sep"></div>
     <div class="mc-group" id="fx-state-wrap">
       <button id="btn-save-fx-state" title="Save the current master and per-track settings as a new recallable FX state.">+ Save State</button>
+      <button id="btn-fx-sticky" title="Apply-to-all mode: when ON, clicking a saved FX state applies it to every matching track in ALL sections (by role: Chords, Pad, Melody, Kick…), and any tracks generated afterwards (tiles, conductor movements) automatically inherit it.">🧷 All Tracks</button>
       <button id="btn-download-fx-states" title="Download all saved FX states as a JSON preset bank.">⬇ FX Set</button>
       <button id="btn-upload-fx-states" title="Upload a JSON FX preset bank. This replaces the current FX state buttons.">⬆ FX Set</button>
       <input type="file" id="fx-states-file-input" accept=".json,application/json" style="display:none">
@@ -643,6 +644,8 @@ let activeSectionId = 'A';    // which section is shown in piano roll
 let selectedTrackId = null;   // track that pencil/keyboard-preview target
 let fxSnapshots = [];         // saved FX-state buttons/preset bank
 let fxMorphSerial = 0;        // cancels in-progress FX state morphs
+let fxStateSticky = false;    // 🧷 toggle: recalled state applies to ALL tracks + future generated ones
+let activeFxStateId = null;   // id of the snapshot acting as the persistent style (sticky mode)
 
 // Audio
 let audioCtx      = null;
@@ -878,7 +881,7 @@ function performUndo() {
 
 // ── PERSISTENCE ────────────────────────────────────────────────────
 function saveProject() {
-  try { localStorage.setItem('daw-v2', JSON.stringify({ project, activeSectionId, selectedTrackId, fxSnapshots })); }
+  try { localStorage.setItem('daw-v2', JSON.stringify({ project, activeSectionId, selectedTrackId, fxSnapshots, fxStateSticky, activeFxStateId })); }
   catch(e) {}
 }
 
@@ -908,6 +911,8 @@ function loadSaved() {
     activeSectionId = data.activeSectionId || project.sectionOrder[0];
     selectedTrackId = data.selectedTrackId || null;
     fxSnapshots = Array.isArray(data.fxSnapshots) ? data.fxSnapshots : [];
+    fxStateSticky = !!data.fxStateSticky;
+    activeFxStateId = data.activeFxStateId || null;
     ensureSelectedTrack();
     return true;
   } catch(e) { return false; }
@@ -3507,6 +3512,9 @@ function buildElementalSection(elCfg, sectionType, lengthBars) {
     }
   }
 
+  // Pinned 🧷 FX state (if any) overrides the element presets above
+  applyFxStyleToTracks(Object.values(tracks));
+
   return { lengthBars, tracks };
 }
 
@@ -4048,6 +4056,7 @@ function prepareImport(incomingTracks, targetSectionId) {
   } else {
     toAdd = incomingValues.map(restore);
   }
+  applyFxStyleToTracks(toAdd); // pinned 🧷 FX state wins over restored settings
 
   // Simulate resulting section to compute new length
   const simTracks = { ...sec.tracks };
@@ -4411,7 +4420,9 @@ function captureTrackFxSettings(track) {
     label: track.label,
     instrument: track.instrument,
     color: track.color,
-    volume: track.volume,
+    // Conductor layers keep their intended mix level in _baseVol while gated
+    // to 0 — capture the intent, not the momentary gate.
+    volume: track._baseVol ?? track.volume,
     muted: track.muted,
     soloed: track.soloed,
     reverbSend: track.reverbSend,
@@ -4420,22 +4431,36 @@ function captureTrackFxSettings(track) {
   };
 }
 
+// Prefer an audible track as the role's representative so a muted/gated copy
+// of the same role doesn't define the style.
+function betterRoleRep(existing, candidate) {
+  if (!existing) return candidate;
+  const audible = t => !t.muted && num(t.volume, 0) > 0.001;
+  return (!audible(existing) && audible(candidate)) ? candidate : existing;
+}
+
 function captureFxSnapshot(label) {
   const sections = {};
+  const roles = {};
   for (const [secId, sec] of Object.entries(project.sections || {})) {
     sections[secId] = { label: sec.label, tracks: {} };
     for (const [trackId, track] of Object.entries(sec.tracks || {})) {
-      sections[secId].tracks[trackId] = captureTrackFxSettings(track);
+      const settings = captureTrackFxSettings(track);
+      sections[secId].tracks[trackId] = settings;
+      if (track.label) roles[track.label] = betterRoleRep(roles[track.label], settings);
     }
   }
   return {
-    version: 1,
+    version: 2,
     id: uid(),
     label,
     createdAt: new Date().toISOString(),
     tempo: project.tempo,
     masterFx: cloneData({ ...DEFAULT_MASTER_FX(), ...(project.masterFx || {}) }),
-    sections
+    sections,
+    // Per-role style (keyed by track label: Chords, Pad, Melody, Kick…) used
+    // by 🧷 All-Tracks mode to restyle any current or future generated track.
+    roles: cloneData(roles)
   };
 }
 
@@ -4449,9 +4474,26 @@ function renderFxSnapshotUI() {
     btn.className = 'fx-state-btn';
     btn.textContent = snap.label;
     btn.title = `${snap.label}: crossfade to this saved master/per-track FX state.`;
+    btn.classList.toggle('on', fxStateSticky && snap.id === activeFxStateId);
     btn.addEventListener('click', () => recallFxSnapshot(i));
     wrap.appendChild(btn);
   });
+  updateFxStickyUI();
+}
+
+function updateFxStickyUI() {
+  const b = document.getElementById('btn-fx-sticky');
+  if (b) b.classList.toggle('on', fxStateSticky);
+}
+
+function toggleFxSticky() {
+  fxStateSticky = !fxStateSticky;
+  if (!fxStateSticky) activeFxStateId = null;
+  renderFxSnapshotUI();
+  saveProject();
+  setStatus(fxStateSticky
+    ? '🧷 All-Tracks ON — click a saved FX state to apply it to every track, now and as new ones generate'
+    : '🧷 All-Tracks off — FX states recall onto their original tracks only');
 }
 
 function saveFxStateButton() {
@@ -4459,7 +4501,7 @@ function saveFxStateButton() {
   fxSnapshots.push(captureFxSnapshot(label));
   renderFxSnapshotUI();
   saveProject();
-  setStatus(`${label} saved — master and per-track settings captured`);
+  setStatus(`${label} saved — instruments, per-track FX/volume/pan, samples and master chain captured`);
 }
 
 function normalizeFxSnapshot(snap, i=0) {
@@ -4469,13 +4511,47 @@ function normalizeFxSnapshot(snap, i=0) {
   out.label = out.label || `FX ${i+1}`;
   out.masterFx = { ...DEFAULT_MASTER_FX(), ...(out.masterFx || {}) };
   out.sections = out.sections || {};
+  out.roles = out.roles || {};
   for (const sec of Object.values(out.sections)) {
     sec.tracks = sec.tracks || {};
     for (const tr of Object.values(sec.tracks)) {
       tr.effects = { ...DEFAULT_FX(), ...(tr.effects || {}) };
+      // Older v1 banks have no roles map — derive one so uploaded/legacy
+      // states work with 🧷 All-Tracks mode too.
+      if (tr.label) out.roles[tr.label] = betterRoleRep(out.roles[tr.label], tr);
     }
   }
+  for (const r of Object.values(out.roles)) {
+    r.effects = { ...DEFAULT_FX(), ...(r.effects || {}) };
+  }
   return out;
+}
+
+// The snapshot currently pinned by 🧷 All-Tracks mode, or null.
+function activeFxStyle() {
+  if (!fxStateSticky || !activeFxStateId) return null;
+  const snap = fxSnapshots.find(s => s && s.id === activeFxStateId);
+  return snap ? normalizeFxSnapshot(snap) : null;
+}
+
+// Restyle freshly generated tracks with the pinned FX state, matching by role
+// label (Chords, Pad, Bass Line, Melody, Arpeggio, Kick, Snare, Hat…).
+// Generator presets run first; the pinned style wins. Mute/solo are left
+// alone — they're arrangement state, not sound design.
+function applyFxStyleToTracks(tracks) {
+  const style = activeFxStyle();
+  if (!style) return;
+  for (const t of tracks || []) {
+    const r = style.roles[t.label];
+    if (!r) continue;
+    if (r.instrument) t.instrument = r.instrument;
+    t.volume     = num(r.volume, t.volume);
+    t.reverbSend = num(r.reverbSend, t.reverbSend);
+    if (r.color) t.color = r.color;
+    if (r.sample) t.sample = cloneData(r.sample);
+    else if (!SAMPLE_INSTRUMENT_BY_ID[t.instrument]) t.sample = null;
+    t.effects = { ...DEFAULT_FX(), ...(r.effects || {}) };
+  }
 }
 
 function downloadFxStates() {
@@ -4485,7 +4561,7 @@ function downloadFxStates() {
   }
   const payload = {
     type: 'daw-fx-state-bank',
-    version: 1,
+    version: 2,
     exportedAt: new Date().toISOString(),
     projectTitle: project.title || 'Untitled',
     snapshots: fxSnapshots.map(normalizeFxSnapshot)
@@ -4534,30 +4610,55 @@ function num(v, fallback=0) { return Number.isFinite(+v) ? +v : fallback; }
 function recallFxSnapshot(index, duration=1.5) {
   const snap = normalizeFxSnapshot(fxSnapshots[index], index);
   if (!snap) return;
+  fxSnapshots[index] = snap; // persist normalized form so the id stays stable
   pushUndo();
   fxMorphSerial++;
   const serial = fxMorphSerial;
+  if (fxStateSticky) activeFxStateId = snap.id;
   document.querySelectorAll('.fx-state-btn').forEach((b, i) => b.classList.toggle('morphing', i === index));
 
   const startMaster = cloneData({ ...DEFAULT_MASTER_FX(), ...(project.masterFx || {}) });
   const targetMaster = cloneData({ ...DEFAULT_MASTER_FX(), ...(snap.masterFx || {}) });
   const trackPairs = [];
 
-  for (const [secId, secSnap] of Object.entries(snap.sections || {})) {
-    for (const [trackId, savedTrackRaw] of Object.entries(secSnap.tracks || {})) {
-      const savedTrack = normalizeFxSnapshot({ sections:{ tmp:{ tracks:{ tmp:savedTrackRaw } } } }).sections.tmp.tracks.tmp;
-      const track = findTrackForSnapshot(secId, trackId, savedTrack);
-      if (!track) continue;
-      track.effects = { ...DEFAULT_FX(), ...(track.effects || {}) };
-      trackPairs.push({
-        secId,
-        track,
-        start: captureTrackFxSettings(track),
-        target: savedTrack
-      });
-      // String-valued FX need to switch discretely. Do it at the start so numeric params morph toward the right mode.
-      track.effects.filterType = savedTrack.effects.filterType || track.effects.filterType;
-      track.effects.delaySync = savedTrack.effects.delaySync || track.effects.delaySync;
+  const addPair = (secId, track, savedTrack) => {
+    track.effects = { ...DEFAULT_FX(), ...(track.effects || {}) };
+    // Conductor layers are gated by board state (muted / volume 0 until their
+    // role unlocks). Restyle their sound, but keep the gate: target volume 0
+    // while gated, intended level stored in _baseVol, mute flags untouched.
+    const gated = track.element != null;
+    const off   = gated && (track.muted || num(track.volume, 0) < 0.001);
+    const target = gated
+      ? { ...savedTrack, volume: off ? 0 : savedTrack.volume,
+          muted: track.muted, soloed: track.soloed }
+      : savedTrack;
+    trackPairs.push({
+      secId, track,
+      start: captureTrackFxSettings(track),
+      target,
+      roleVol: gated ? num(savedTrack.volume, null) : null
+    });
+    // String-valued FX need to switch discretely. Do it at the start so numeric params morph toward the right mode.
+    track.effects.filterType = savedTrack.effects.filterType || track.effects.filterType;
+    track.effects.delaySync = savedTrack.effects.delaySync || track.effects.delaySync;
+  };
+
+  if (fxStateSticky && Object.keys(snap.roles || {}).length) {
+    // 🧷 All-Tracks mode: restyle every track in every section whose label
+    // matches a saved role — independent of when/how the track was generated.
+    for (const [secId, sec] of Object.entries(project.sections || {})) {
+      for (const track of Object.values(sec.tracks || {})) {
+        const savedTrack = snap.roles[track.label];
+        if (savedTrack) addPair(secId, track, savedTrack);
+      }
+    }
+  } else {
+    for (const [secId, secSnap] of Object.entries(snap.sections || {})) {
+      for (const [trackId, savedTrackRaw] of Object.entries(secSnap.tracks || {})) {
+        const savedTrack = normalizeFxSnapshot({ sections:{ tmp:{ tracks:{ tmp:savedTrackRaw } } } }).sections.tmp.tracks.tmp;
+        const track = findTrackForSnapshot(secId, trackId, savedTrack);
+        if (track) addPair(secId, track, savedTrack);
+      }
     }
   }
 
@@ -4589,7 +4690,7 @@ function recallFxSnapshot(index, duration=1.5) {
       }
     }
 
-    Object.values(activeTracks()).forEach(t => trackEngines[t.id]?.apply(t));
+    for (const pair of trackPairs) trackEngines[pair.track.id]?.apply(pair.track);
     if (raw < 1) {
       requestAnimationFrame(step);
     } else {
@@ -4605,7 +4706,7 @@ function finishFxSnapshotRecall(serial, snap, trackPairs, targetMaster) {
   project.tempo = clamp(+snap.tempo || project.tempo, 20, 400);
   document.getElementById('bpm-input').value = project.tempo;
 
-  for (const { track, target } of trackPairs) {
+  for (const { track, target, roleVol } of trackPairs) {
     track.instrument = target.instrument || track.instrument;
     track.color = target.color || track.color;
     track.volume = num(target.volume, track.volume);
@@ -4614,10 +4715,15 @@ function finishFxSnapshotRecall(serial, snap, trackPairs, targetMaster) {
     track.reverbSend = num(target.reverbSend, track.reverbSend);
     track.sample = target.sample ? cloneData(target.sample) : track.sample;
     track.effects = { ...DEFAULT_FX(), ...(target.effects || {}) };
+    // Gated conductor layers: remember the style's level as the unlock target
+    if (roleVol != null) track._baseVol = roleVol;
+    // Instrument switched to a sampled voice — make sure its buffer loads
+    if (SAMPLE_INSTRUMENT_BY_ID[track.instrument]) ensureSampleInstrumentLoaded(track);
   }
 
   applyMasterFxToAudio(0.05);
-  Object.values(activeTracks()).forEach(t => trackEngines[t.id]?.apply(t));
+  applyDeRezFx(); // bits / rate / mix from the recalled state take effect on the audio nodes
+  for (const pair of trackPairs) trackEngines[pair.track.id]?.apply(pair.track);
   syncMasterStrip();
   renderTrackHeaders();
   renderFxSnapshotUI();
@@ -4709,6 +4815,7 @@ document.getElementById('mc-derez-mix').addEventListener('input', async e => {
 });
 
 document.getElementById('btn-save-fx-state').addEventListener('click', saveFxStateButton);
+document.getElementById('btn-fx-sticky').addEventListener('click', toggleFxSticky);
 document.getElementById('btn-download-fx-states').addEventListener('click', downloadFxStates);
 document.getElementById('btn-upload-fx-states').addEventListener('click', () =>
   document.getElementById('fx-states-file-input').click());
@@ -4967,6 +5074,7 @@ async function fetchElementalRoles(entry) {
   const parsed = parseMidi(await r.arrayBuffer());
   const roles = expandChordRoles(parsed.sections['A'].tracks, profileFor(entry.e));
   if (!roles) throw new Error('empty MIDI');
+  applyFxStyleToTracks(roles);
   return roles;
 }
 
@@ -5138,6 +5246,8 @@ document.getElementById('btn-reset').addEventListener('click', () => {
     activeSectionId = 'A';
     selectedTrackId = null;
     fxSnapshots = [];
+    fxStateSticky = false;
+    activeFxStateId = null;
     renderFxSnapshotUI();
     ensureSelectedTrack();
     if (audioCtx) rebuildEngines();
@@ -5285,6 +5395,7 @@ init();
           notes: groups[inst], effects: { ...DEFAULT_FX(), ...(INST_FILTER[inst] || {}) },
         });
       }
+      if (typeof applyFxStyleToTracks === 'function') applyFxStyleToTracks(out);
       return out;
     } catch(e){ return []; }
   }
@@ -5333,6 +5444,8 @@ init();
         if (p.sample) t.sample = { ...p.sample };   // soft guitar / synth mp3 + pitch correction
       }
     }
+    // Pinned 🧷 FX state restyles the movement's voices before they're cloned
+    if (typeof applyFxStyleToTracks === 'function') applyFxStyleToTracks(roles);
     return roles;
   }
 
