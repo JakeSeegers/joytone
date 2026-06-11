@@ -1284,6 +1284,14 @@ function trackSampleRoot(track) {
   return clamp(Math.round(track.sample?.rootMidi ?? 60), MIDI_MIN, MIDI_MAX);
 }
 
+// Root used for playback-rate math: integer root plus the detected
+// fine-tuning offset (fractions of a semitone). Samples recorded between
+// pitches would otherwise play constantly sharp/flat against the
+// synthesized voices — the classic "out of tune melody" complaint.
+function trackSamplePlaybackRoot(track) {
+  return trackSampleRoot(track) + clamp(+track.sample?.rootFine || 0, -0.5, 0.5);
+}
+
 function trackSampleName(track) {
   return track.sample?.name || track.sample?.url?.split('/').pop() || '';
 }
@@ -1342,16 +1350,29 @@ function estimateSampleRootMidi(buffer) {
   for (let i=0; i<win; i++) zeroLag += data[i] * data[i];
   if (zeroLag <= 0) return null;
 
-  for (let lag=minLag; lag<=maxLag && lag<win-1; lag++) {
+  const corrAt = lag => {
     let corr = 0;
     for (let i=0; i<win-lag; i+=2) corr += data[i] * data[i+lag];
-    corr /= zeroLag;
+    return corr / zeroLag;
+  };
+  for (let lag=minLag; lag<=maxLag && lag<win-1; lag++) {
+    const corr = corrAt(lag);
     if (corr > bestCorr) { bestCorr = corr; bestLag = lag; }
   }
   if (!bestLag || bestCorr < 0.18) return null;
-  const freq = sr / bestLag;
-  const midi = clamp(Math.round(69 + 12 * Math.log2(freq / 440)), MIDI_MIN, MIDI_MAX);
-  return { midi, freq, confidence: bestCorr };
+  // Parabolic interpolation around the correlation peak gives a sub-sample
+  // lag, so the estimate is cents-accurate instead of snapped to the lag grid.
+  let lagF = bestLag;
+  if (bestLag > minLag && bestLag < maxLag) {
+    const c0 = corrAt(bestLag-1), c1 = bestCorr, c2 = corrAt(bestLag+1);
+    const denom = c0 - 2*c1 + c2;
+    if (Math.abs(denom) > 1e-9) lagF = bestLag + clamp(0.5 * (c0 - c2) / denom, -0.5, 0.5);
+  }
+  const freq = sr / lagF;
+  const midiFloat = clamp(69 + 12 * Math.log2(freq / 440), MIDI_MIN, MIDI_MAX);
+  const midi = clamp(Math.round(midiFloat), MIDI_MIN, MIDI_MAX);
+  // rootFine: fraction of a semitone the sample sits away from its note
+  return { midi, midiFloat, rootFine: midiFloat - midi, freq, confidence: bestCorr };
 }
 
 function inferRootFromMidiNotes(track) {
@@ -1371,9 +1392,10 @@ function autoShiftSampleTrack(track, rootInput=null) {
   if (!track) return;
   const nameMidi = detectMidiFromSampleName(trackSampleName(track));
   let midi = nameMidi, source = 'filename';
+  let fine = 0;
   if (midi == null && sampleBuffers[track.id]) {
     const est = estimateSampleRootMidi(sampleBuffers[track.id]);
-    if (est) { midi = est.midi; source = `audio pitch (${est.confidence.toFixed(2)})`; }
+    if (est) { midi = est.midi; fine = est.rootFine || 0; source = `audio pitch (${est.confidence.toFixed(2)})`; }
   }
   if (midi == null) {
     midi = inferRootFromMidiNotes(track);
@@ -1383,7 +1405,7 @@ function autoShiftSampleTrack(track, rootInput=null) {
     setStatus('AutoShift could not find a sample pitch or MIDI-note fallback', true);
     return;
   }
-  track.sample = { ...(track.sample || {}), rootMidi: midi };
+  track.sample = { ...(track.sample || {}), rootMidi: midi, rootFine: fine };
   track.instrument = 'sample';
   if (rootInput) rootInput.value = midi;
   saveProject();
@@ -1460,12 +1482,12 @@ async function ensureSampleInstrumentLoaded(track) {
     sampleBuffers[track.id] = buf;
     delete xfadeBuffers[track.id];
     // Pitch-detect only melodic samples; drums/kicks stay at C4 so the drawn note plays them untransposed.
-    let root = 60, detail = 'root C4';
+    let root = 60, fine = 0, detail = 'root C4';
     if (def.group === 'Samples') {
       const est = estimateSampleRootMidi(buf);
-      if (est) { root = est.midi; detail = `detected root ${noteLabel(est.midi)} (${est.confidence.toFixed(2)})`; }
+      if (est) { root = est.midi; fine = est.rootFine || 0; detail = `detected root ${noteLabel(est.midi)} (${est.confidence.toFixed(2)})`; }
     }
-    track.sample = { ...(track.sample || {}), name: def.label, url, rootMidi: root, instrumentId: track.instrument, builtin: true };
+    track.sample = { ...(track.sample || {}), name: def.label, url, rootMidi: root, rootFine: fine, instrumentId: track.instrument, builtin: true };
     renderTrackHeaders();
     saveProject();
     setStatus(`${def.label} loaded — ${detail}`);
@@ -1492,7 +1514,7 @@ function playSampleNote(track, midiNote, dur, t, dest, velocity=100) {
   if (!ctx || !buffer) return;
   const src = ctx.createBufferSource();
   src.buffer = buffer;
-  const semis = midiNote - trackSampleRoot(track);
+  const semis = midiNote - trackSamplePlaybackRoot(track);
   const rate = Math.pow(2, semis / 12);
   src.playbackRate.setValueAtTime(rate, t);
 
@@ -1552,7 +1574,7 @@ function playSustainedSampleNote(track, midiNote, dur, t, dest, velocity=100) {
   const buffer = sampleBuffers[track.id];
   if (!ctx || !buffer) return;
 
-  const semis = midiNote - trackSampleRoot(track);
+  const semis = midiNote - trackSamplePlaybackRoot(track);
   const rate = Math.pow(2, semis / 12);
   const naturalDur = buffer.duration / rate;
 
@@ -1603,7 +1625,7 @@ function playStretchedSampleNote(track, midiNote, dur, t, dest, velocity=100) {
   // Simple granular stretch: each grain is pitch-shifted by playbackRate,
   // but the read head advances to cover the sample across the MIDI note length.
   // This is much less pitch-warped than changing playbackRate just to fit the note.
-  const semis = midiNote - trackSampleRoot(track);
+  const semis = midiNote - trackSamplePlaybackRoot(track);
   const pitchRate = Math.pow(2, semis / 12);
   const naturalDur = buffer.duration / pitchRate;
   const stretchRatio = dur / Math.max(naturalDur, 0.001);
@@ -3071,22 +3093,76 @@ function melScalePool(rootPc, mode, lo, hi) {
   return out;
 }
 
-function melChordPool(chord, lo, hi) {
-  const pcs=[...new Set(chord.map(n=>((n.midiNote%12)+12)%12))];
-  const out=[];
-  for (let m=lo; m<=hi; m++) if (pcs.includes(((m%12)+12)%12)) out.push(m);
-  return out;
+function pcOf(m) { return ((m % 12) + 12) % 12; }
+
+// Harmonic root of a chord: the pitch class best supported by a fifth/third
+// above it within the chord. Inversions (3rd in the bass) and chromatic
+// walkdown bass notes stop polluting the root — taking the literal lowest
+// note made pads/lines build on non-roots and clash.
+function harmonicRootPc(chord) {
+  const pcs = new Set(chord.map(n => pcOf(n.midiNote)));
+  let best = null, bestScore = 0;
+  for (const pc of pcs) {
+    let score = 0;
+    if (pcs.has((pc + 7) % 12)) score += 4;                            // fifth above
+    if (pcs.has((pc + 3) % 12) || pcs.has((pc + 4) % 12)) score += 2;  // third above
+    if (pcs.has((pc + 10) % 12) || pcs.has((pc + 11) % 12)) score += 1;// seventh
+    if (score > bestScore) { bestScore = score; best = pc; }
+  }
+  if (best == null)
+    best = pcOf(chord.reduce((m,n) => Math.min(m, n.midiNote), chord[0].midiNote));
+  return best;
+}
+
+// Stable chord pcs: drop any pc that forms a semitone against another chord
+// pc without fifth support of its own (the chromatic walkdown bass, inversion
+// artifacts, exposed maj7 colour) — melodic lines built from these are what
+// made generated melodies sound like they contained wrong notes.
+function stableChordPcs(chord) {
+  const pcs = [...new Set(chord.map(n => pcOf(n.midiNote)))];
+  const root = harmonicRootPc(chord);
+  const stable = pcs.filter(pc => {
+    if (pc === root) return true;
+    const semitoneClash = pcs.some(o => o !== pc &&
+      (((o - pc + 12) % 12) === 1 || ((pc - o + 12) % 12) === 1));
+    return !semitoneClash || pcs.includes((pc + 7) % 12);
+  });
+  return stable.length ? stable : [root];
+}
+
+// The melody's key, derived from the chords themselves: pick the major
+// collection that covers the most (duration-weighted) stable chord content.
+// The old profile-based guess could disagree with the actual progression,
+// which mixed two pitch collections inside one melodic line.
+function detectMelodyKey(chords) {
+  const MAJ = new Set([0,2,4,5,7,9,11]);
+  const w = new Array(12).fill(0);
+  for (const ch of chords) {
+    const dur = Math.max(ch[0].duration || 1, 0.25);
+    for (const pc of stableChordPcs(ch)) w[pc] += dur;
+  }
+  let best = 0, bestS = -Infinity;
+  for (let r=0; r<12; r++) {
+    let s = 0;
+    for (let pc=0; pc<12; pc++) {
+      if (!w[pc]) continue;
+      s += MAJ.has((pc - r + 12) % 12) ? w[pc] : -1.5 * w[pc];
+    }
+    if (s > bestS) { bestS = s; best = r; }
+  }
+  return best;
 }
 
 // Motif-driven melody:
+//  • EVERY note comes from one pentatonic collection derived from the chords
+//    themselves — pentatonic lines contain no semitones, so the melody can
+//    never clash with itself, and never lands a sharp dissonance on a chord
 //  • one short rhythmic cell repeats for the whole phrase — only the final
 //    chord gets a cadence rhythm (short approach + long resolving note)
-//  • pitches move mostly stepwise along the scale, following an arch contour
-//    that peaks ~2/3 of the way through the progression
-//  • strong beats and held notes snap to chord tones; short weak-beat notes
-//    stay as stepwise passing tones
-//  • each repeat of the cell mutates at most one interval, so the phrase
-//    evolves without wandering
+//  • pitches move stepwise through the collection along an arch contour that
+//    peaks ~2/3 of the way through the progression
+//  • strong beats and held notes prefer tones the current chord shares with
+//    the collection; each cell repeat mutates at most one interval
 
 // Rhythmic cells — offsets + durations in beats over a 4-beat chord
 // (scaled to actual chord length at generation time). All leave a little
@@ -3102,14 +3178,22 @@ const MEL_CADENCE = [{o:0,d:.9},{o:1,d:2.6}];           // approach + long resol
 
 function generateMelodyNotes(chords, rootPc, mode='major') {
   const LO=67, HI=84, CENTER=74; // G4–C6, sits above the chord voicing
-  const scale = melScalePool(rootPc, mode, LO, HI);
-  if (!scale.length || !chords.length) return [];
+  if (!chords.length) return [];
+
+  // The single pitch collection for the entire line: the pentatonic subset
+  // of the chord-derived key. (Minor keys share their relative major's
+  // pentatonic, so minor clips keep their character via chords + cadence.)
+  const keyPc = detectMelodyKey(chords);
+  const PENTA = new Set([0,2,4,7,9].map(iv => (keyPc + iv) % 12));
+  const pool = [];
+  for (let m=LO; m<=HI; m++) if (PENTA.has(pcOf(m))) pool.push(m);
+  if (!pool.length) return [];
 
   const N = chords.length;
   const motif = MEL_MOTIFS[(Math.random()*MEL_MOTIFS.length)|0];
 
-  // Base pitch shape of the cell: scale-step intervals between successive
-  // notes — mostly single steps, at most one third, so the line is singable.
+  // Base pitch shape of the cell: steps through the collection — mostly
+  // single steps, at most one skip, so the line is singable.
   const baseShape = [];
   let leapUsed = false;
   for (let i=1; i<motif.length; i++) {
@@ -3120,13 +3204,13 @@ function generateMelodyNotes(chords, rootPc, mode='major') {
     else baseShape.push(0);
   }
 
-  const scaleIdx = m => {
+  const poolIdx = m => {
     let bi=0, bd=Infinity;
-    for (let i=0;i<scale.length;i++){const d=Math.abs(scale[i]-m); if(d<bd){bd=d;bi=i;}}
+    for (let i=0;i<pool.length;i++){const d=Math.abs(pool[i]-m); if(d<bd){bd=d;bi=i;}}
     return bi;
   };
-  const nearestIn = (pool, target) =>
-    pool.reduce((b,n)=>Math.abs(n-target)<Math.abs(b-target)?n:b, pool[0]);
+  const nearestIn = (arr, target) =>
+    arr.reduce((b,n)=>Math.abs(n-target)<Math.abs(b-target)?n:b, arr[0]);
 
   const peakIdx = Math.max(1, Math.round((N-1)*0.62));
   const notes = [];
@@ -3138,16 +3222,20 @@ function generateMelodyNotes(chords, rootPc, mode='major') {
     const cLen   = ci<N-1 ? chords[ci+1][0].beatStart - cStart
                           : Math.max(chord[0].duration, 2);
     const bs     = cLen/4;
-    const cTones = melChordPool(chord, LO, HI);
-    const pool   = cTones.length ? cTones : scale;
+    // Anchors: collection tones the current chord actually contains. For a
+    // chromatic chord sharing nothing with the collection, the line simply
+    // stays inside the collection (a soft rub beats a wrong note).
+    const stable  = new Set(stableChordPcs(chord));
+    const anchors = pool.filter(m => stable.has(pcOf(m)));
+    const aPool   = anchors.length ? anchors : pool;
 
     if (ci===N-1 && N>1) {
-      // Cadence: land on the chord root by step and let it ring.
-      const rootMidi = chord.reduce((m,n)=>n.midiNote<m?n.midiNote:m, chord[0].midiNote);
-      const rootPool = pool.filter(n=>((n-rootMidi)%12+12)%12===0);
-      const final    = nearestIn(rootPool.length?rootPool:pool, prev);
-      const fi       = scaleIdx(final);
-      const approach = scale[clamp(fi + (prev>=final?1:-1), 0, scale.length-1)];
+      // Cadence: land on the chord's harmonic root by step and let it ring.
+      const rootPcCh  = harmonicRootPc(chord);
+      const rootPool  = pool.filter(m => pcOf(m) === rootPcCh);
+      const final     = nearestIn(rootPool.length ? rootPool : aPool, prev);
+      const fi        = poolIdx(final);
+      const approach  = pool[clamp(fi + (prev>=final?1:-1), 0, pool.length-1)];
       notes.push({ id:uid(), beatStart:cStart, duration:MEL_CADENCE[0].d*bs,
         midiNote:approach, velocity:74+((Math.random()*8)|0) });
       notes.push({ id:uid(), beatStart:cStart+MEL_CADENCE[1].o*bs,
@@ -3169,24 +3257,24 @@ function generateMelodyNotes(chords, rootPc, mode='major') {
       shape[j] = clamp(shape[j] + (Math.random()<.5?-1:1), -2, 2);
     }
 
-    // Anchor on a chord tone near both the previous note and the contour.
-    let anchor = pool[0], bcost = Infinity;
-    for (const t of pool) {
+    // Anchor on a chord-and-collection tone near the previous note + contour.
+    let anchor = aPool[0], bcost = Infinity;
+    for (const t of aPool) {
       const cost = Math.abs(t-prev) + 0.8*Math.abs(t-contourTarget);
       if (cost<bcost) { bcost=cost; anchor=t; }
     }
 
-    let cur = anchor, idx = scaleIdx(anchor);
+    let cur = anchor, idx = poolIdx(anchor);
     for (let k=0; k<motif.length; k++) {
       const {o,d} = motif[k];
       if (o*bs >= cLen-0.05) break;
-      if (k>0) { idx = clamp(idx + shape[k-1], 0, scale.length-1); cur = scale[idx]; }
+      if (k>0) { idx = clamp(idx + shape[k-1], 0, pool.length-1); cur = pool[idx]; }
       const strong = o<0.5 || (o>=2 && o<2.5);
-      // Chord tones own the strong beats and anything held long; short
-      // weak-beat notes pass freely through the scale.
-      if ((strong || d>=0.8) && cTones.length && !cTones.includes(cur)) {
-        cur = nearestIn(cTones, cur);
-        idx = scaleIdx(cur);
+      // Strong beats and held notes pull to the chord's collection tones;
+      // short weak-beat notes walk the collection freely.
+      if ((strong || d>=0.8) && anchors.length && !stable.has(pcOf(cur))) {
+        cur = nearestIn(anchors, cur);
+        idx = poolIdx(cur);
       }
       notes.push({
         id:uid(), beatStart:cStart+o*bs,
@@ -3733,8 +3821,7 @@ function generateBasslineNotes(chords, rootPc, mode='major') {
 
   const scale = melScalePool(rootPc, mode, LO-2, HI+2);
   const notes = [];
-  const firstPc = ((chords[0][0].midiNote%12)+12)%12;
-  let prev = inRange(firstPc, 40);
+  let prev = inRange(harmonicRootPc(chords[0]), 40);
 
   // Pick one groove for the whole section — consistent, not re-rolled per chord
   const groove = BASS_GROOVES[Math.floor(Math.random() * BASS_GROOVES.length)];
@@ -3746,14 +3833,16 @@ function generateBasslineNotes(chords, rootPc, mode='major') {
       ? chords[ci+1][0].beatStart - cStart
       : Math.max(chord[0].duration, 2);
 
-    const chordRootPc = ((chord[0].midiNote%12)+12)%12;
+    // Harmonic root, not the literal lowest note — inversions and chromatic
+    // bass figures were giving the groove non-root foundations.
+    const chordRootPc = harmonicRootPc(chord);
     const root   = inRange(chordRootPc, prev);
     const fifth  = inRange((chordRootPc+7)%12, root);
     const octave = root+12<=HI ? root+12 : root; // octave up, or same if too high
 
     // Approach: semitone below next chord root (or scale tone if not in scale)
     const nextRootPc = ci<chords.length-1
-      ? ((chords[ci+1][0].midiNote%12)+12)%12
+      ? harmonicRootPc(chords[ci+1])
       : chordRootPc;
     const nextRoot = inRange(nextRootPc, root);
     const approachBelow = nextRoot-1 >= LO ? nextRoot-1 : nextRoot+1;
@@ -3915,20 +4004,19 @@ function expandChordRoles(incomingTracks, opts={}) {
     ? generateBasslineNotes(chords, key.root, key.mode)
     : [];
 
-  // Glue pad — a quiet open fifth (no 3rd) held under each chord. The stable
-  // drone makes the generated lines above it read as intentional, and the
-  // ambiguous voicing can't clash with whatever harmony happens above it.
+  // Glue pad — a quiet open fifth (no 3rd) held under each chord. Built on
+  // the chord's HARMONIC root (not the literal lowest note), so inversions
+  // and chromatic bass lines don't put the fifth on a non-chord tone.
   const padNotes = o.pad ? chords.flatMap((chord, i) => {
-    const lowest   = chord.reduce((m,n) => n.midiNote < m.midiNote ? n : m, chord[0]);
+    const cStart   = chord[0].beatStart;
     const nextBeat = i < chords.length-1 ? chords[i+1][0].beatStart
-                                         : lowest.beatStart + lowest.duration;
-    const dur = Math.max(nextBeat - lowest.beatStart, 0.5);
-    let root = lowest.midiNote;
-    while (root < 48) root += 12;
-    while (root > 59) root -= 12;
+                                         : cStart + chord[0].duration;
+    const dur = Math.max(nextBeat - cStart, 0.5);
+    let root = 48;
+    while (pcOf(root) !== harmonicRootPc(chord)) root++;
     return [
-      { id:uid(), beatStart:lowest.beatStart, duration:dur, midiNote:root,   velocity:52 },
-      { id:uid(), beatStart:lowest.beatStart, duration:dur, midiNote:root+7, velocity:46 },
+      { id:uid(), beatStart:cStart, duration:dur, midiNote:root,   velocity:52 },
+      { id:uid(), beatStart:cStart, duration:dur, midiNote:root+7, velocity:46 },
     ];
   }) : [];
 
@@ -3944,7 +4032,12 @@ function expandChordRoles(incomingTracks, opts={}) {
       const start  = chord[0].beatStart;
       const end    = i < chords.length-1 ? chords[i+1][0].beatStart
                                          : start + chord[0].duration;
-      const tones  = [...chord].sort((a,b) => a.midiNote - b.midiNote);
+      // Stable chord tones only — cycling the chromatic walkdown bass or an
+      // inversion artifact on 16ths sounded like a melody full of wrong notes.
+      const stable = new Set(stableChordPcs(chord));
+      const tones  = [...chord].sort((a,b) => a.midiNote - b.midiNote)
+        .filter(n => stable.has(pcOf(n.midiNote)));
+      if (!tones.length) continue;
       // chip mode: 3-note strict ascending cell (root-3rd-5th only)
       // standard:  chord tones + octave root — one octave cell
       const pool = o.arpMode === 'chip'
