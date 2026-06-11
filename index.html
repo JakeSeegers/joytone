@@ -63,41 +63,6 @@ html,body{height:100%;overflow:hidden;background:#111;color:#ccc;font:13px/1.4 '
    The conductor board sits above the DAW editing surface; all settings
    (transport, master strip, sections, tracks, piano roll) stay visible. */
 
-/* Godaigo conductor strip */
-#godaigo-strip{
-  display:flex;align-items:center;gap:6px;padding:6px 10px;
-  background:#11111a;border-bottom:1px solid #2a2a35;flex-shrink:0;
-  min-height:34px;flex-wrap:wrap
-}
-#godaigo-strip .lbl{color:#7a6f9a;font-size:11px;white-space:nowrap;font-weight:600}
-#godaigo-strip .ga-grp{display:flex;align-items:center;gap:4px;flex-wrap:wrap}
-#godaigo-strip .ga-sep{width:1px;height:18px;background:#2a2a35;margin:0 3px}
-.ga-btn{padding:3px 10px;font-size:11px;border:1px solid #444;border-radius:3px;background:#1c1c28;color:#cdc7e0;cursor:pointer}
-.ga-btn:hover{background:#26263a}
-.ga-btn:disabled{opacity:.4;cursor:default}
-.ga-btn.on{background:#2d2d50;color:#fff;box-shadow:0 0 8px rgba(120,120,220,.4)}
-.ga-btn.tile{min-width:60px}
-.ga-btn.tile .ct{opacity:.7;font-variant-numeric:tabular-nums}
-.ga-btn.tier1{border-color:#4a5a8a}
-.ga-btn.tier2{border-color:#6f7fcf;background:#23233a}
-.ga-btn.tier3{border-color:#9a8be0;background:#2d2d50;color:#fff}
-.ga-state.on{background:#3a2d5a;border-color:#8877cc;color:#e8e0ff}
-#godaigo-strip select{background:#1c1c28;color:#cdc7e0;border:1px solid #444;border-radius:3px;font-size:11px;padding:1px 3px}
-#ga-readout{color:#888;font-size:10px;font-family:monospace;margin-left:auto;white-space:nowrap}
-
-/* Conductor board: compact strip so the DAW below keeps most of the window */
-#godaigo-stage{flex:0 0 auto;display:flex;align-items:center;justify-content:center;
-  padding:8px 0;background:radial-gradient(ellipse at center,#15151f 0%,#0c0c12 100%);overflow:hidden}
-#godaigo-board{display:grid;grid-template-columns:repeat(6,120px);gap:10px}
-.gb-cell{border:1px solid #2a2a35;border-radius:8px;padding:8px 8px;background:#14141c;
-  display:flex;flex-direction:column;align-items:center;gap:6px;transition:box-shadow .4s,border-color .4s,background .4s;cursor:pointer;user-select:none}
-.gb-cell:hover{background:#181824}
-.gb-cell .gb-emoji{font-size:20px}
-.gb-cell .gb-name{font-size:11px;font-weight:600;letter-spacing:.5px}
-.gb-cell .gb-meter{width:100%;height:5px;border-radius:3px;background:#222;overflow:hidden}
-.gb-cell .gb-fill{height:100%;width:0;background:#6f7fcf;transition:width .5s}
-.gb-cell .gb-tier{font-size:10px;color:#777;font-family:monospace}
-
 /* DAW main area */
 #daw-main{display:flex;flex:1;overflow:hidden;min-height:0}
 
@@ -410,50 +375,6 @@ input[type=range]{cursor:pointer}
     <div id="elemental-buttons"><!-- filled by JS --></div>
     <button id="btn-add-drums" title="Add the last loaded drums to the current sequence, keeping their previous mix/FX settings." disabled>🥁 Add Drums</button>
     <button id="btn-elemental-auto" title="Auto-shuffle: at each loop boundary, swap to another random clip from the current element filter.">🎲 Auto</button>
-  </div>
-
-  <!-- ── GODAIGO CONDUCTOR ────────────────────────────────────────────
-       The adaptive player. Each element layer is generated from the MIDI
-       libraries (midi/chords per element + midi/drums by feel/density) run
-       through the existing adaptation pipeline (expandChordRoles + the chord
-       variation tool + real voices/FX). The conductor rides each layer's
-       track gains by simulated board state — the same hooks the game wires. -->
-  <div id="godaigo-strip">
-    <span class="lbl" title="Adaptive player — the soundtrack is conducted by board state, sourced from the MIDI libraries.">🎴 Conductor:</span>
-    <div class="ga-grp">
-      <button id="ga-toggle" class="ga-btn" title="Start / stop the adaptive player">▶ Play</button>
-      <button id="ga-reset" class="ga-btn" title="Re-deal the board — regenerate all six element layers from the libraries, silent">⟳ New Board</button>
-    </div>
-    <div class="ga-sep"></div>
-    <!-- Scroll / response-window hooks (§4) -->
-    <div class="ga-grp">
-      <select id="ga-cast-el" title="Element of the scroll being cast"></select>
-      <button id="ga-cast" class="ga-btn" title="Scroll cast — a brief accent from that element's layer">🎴 Cast</button>
-      <button id="ga-counter" class="ga-btn" title="Counter scroll — sharp swell, then release">⚔ Counter</button>
-    </div>
-    <div class="ga-grp">
-      <button id="ga-window" class="ga-btn" title="Open the response window — duck + held breath">🫧 Window</button>
-      <select id="ga-resp-el" title="Element of the responding scroll"></select>
-      <button id="ga-respond" class="ga-btn" title="Response played — resolves into this element">▸ Respond</button>
-      <button id="ga-noresp" class="ga-btn" title="No response — tension released">✕ None</button>
-    </div>
-    <div class="ga-sep"></div>
-    <!-- Game-state rhythm shifts (§5) -->
-    <div class="ga-grp">
-      <button class="ga-btn ga-state" data-state="peaceful" title="Meditative, open">🕊 Peaceful</button>
-      <button class="ga-btn ga-state" data-state="contested" title="Friction — drums &amp; arps lean in">⚡ Contested</button>
-      <button class="ga-btn ga-state" data-state="endgame" title="Narrowing — driving, full">🔥 Endgame</button>
-      <button id="ga-turn" class="ga-btn" title="Turn change — a subtle breath">↻ Turn</button>
-    </div>
-    <div class="ga-sep"></div>
-    <!-- The Great Convergence (§6) -->
-    <button id="ga-converge" class="ga-btn" title="Win condition — foreground the dominant elements as a finale">✦ Convergence</button>
-    <span id="ga-readout">idle</span>
-  </div>
-
-  <!-- ── BOARD STAGE — click an element tile to reveal it (§2) ─────────── -->
-  <div id="godaigo-stage">
-    <div id="godaigo-board"><!-- filled by JS --></div>
   </div>
 
   <!-- ── MAIN (hidden in pure-player mode) ─────────────────────────── -->
@@ -3155,19 +3076,30 @@ function generateMelodyNotes(chords) {
   if (!pool.length) return [];
 
   const N = chords.length;
-  const motif = MEL_MOTIFS[(Math.random()*MEL_MOTIFS.length)|0];
+  // Two distinct rhythm cells, alternated bar to bar (call / answer) — one
+  // cell repeated every bar was the "doo doot de doot" monotony.
+  const iA = (Math.random()*MEL_MOTIFS.length)|0;
+  const iB = (iA + 1 + ((Math.random()*(MEL_MOTIFS.length-1))|0)) % MEL_MOTIFS.length;
+  const motifs = [MEL_MOTIFS[iA], MEL_MOTIFS[iB]];
 
-  // Base pitch shape of the cell: steps through the collection — mostly
+  // Base pitch shape per cell: steps through the collection — mostly
   // single steps, at most one skip, so the line is singable.
-  const baseShape = [];
-  let leapUsed = false;
-  for (let i=1; i<motif.length; i++) {
-    const r = Math.random();
-    if (!leapUsed && r < .18) { baseShape.push(Math.random()<.5?-2:2); leapUsed = true; }
-    else if (r < .56) baseShape.push(-1);
-    else if (r < .94) baseShape.push(1);
-    else baseShape.push(0);
-  }
+  const mkShape = motif => {
+    const shape = [];
+    let leapUsed = false;
+    for (let i=1; i<motif.length; i++) {
+      const r = Math.random();
+      if (!leapUsed && r < .18) { shape.push(Math.random()<.5?-2:2); leapUsed = true; }
+      else if (r < .56) shape.push(-1);
+      else if (r < .94) shape.push(1);
+      else shape.push(0);
+    }
+    return shape;
+  };
+  const baseShapes = motifs.map(mkShape);
+  // Period form: a half cadence pauses the line mid-phrase (question),
+  // the full cadence at the end resolves it (answer).
+  const half = N >= 4 ? Math.ceil(N/2) : -1;
 
   const poolIdx = m => {
     let bi=0, bd=Infinity;
@@ -3194,18 +3126,25 @@ function generateMelodyNotes(chords) {
     const anchors = pool.filter(m => stable.has(pcOf(m)));
     const aPool   = anchors.length ? anchors : pool;
 
-    if (ci===N-1 && N>1) {
-      // Cadence: land on the chord's harmonic root by step and let it ring.
+    const isFull = ci===N-1 && N>1;
+    const isHalf = !isFull && ci===half-1;
+    if (isFull || isHalf) {
+      // Cadences: the full cadence lands long on the harmonic root; the
+      // half cadence pauses on the fifth (or another non-root chord tone),
+      // leaving the phrase as an open question and giving the line a breath.
       const rootPcCh  = harmonicRootPc(chord);
-      const rootPool  = pool.filter(m => pcOf(m) === rootPcCh);
-      const final     = nearestIn(rootPool.length ? rootPool : aPool, prev);
+      const targetPc  = isFull ? rootPcCh : (rootPcCh+7)%12;
+      let tPool = pool.filter(m => pcOf(m) === targetPc);
+      if (!tPool.length && isHalf) tPool = aPool.filter(m => pcOf(m) !== rootPcCh);
+      if (!tPool.length) tPool = aPool;
+      const final     = nearestIn(tPool, prev);
       const fi        = poolIdx(final);
       const approach  = pool[clamp(fi + (prev>=final?1:-1), 0, pool.length-1)];
       notes.push({ id:uid(), beatStart:cStart, duration:MEL_CADENCE[0].d*bs,
         midiNote:approach, velocity:74+((Math.random()*8)|0) });
       notes.push({ id:uid(), beatStart:cStart+MEL_CADENCE[1].o*bs,
-        duration:Math.min(MEL_CADENCE[1].d, 4-MEL_CADENCE[1].o)*bs,
-        midiNote:final, velocity:84+((Math.random()*8)|0) });
+        duration:Math.min(isFull ? MEL_CADENCE[1].d : 1.6, 4-MEL_CADENCE[1].o)*bs,
+        midiNote:final, velocity:(isFull?84:78)+((Math.random()*8)|0) });
       prev = final;
       continue;
     }
@@ -3215,8 +3154,9 @@ function generateMelodyNotes(chords) {
     const lift = ci<=peakIdx ? 7*ci/peakIdx : 7*(N-1-ci)/Math.max(1, N-1-peakIdx);
     const contourTarget = CENTER + Math.round(lift);
 
-    // Repeat the cell, mutating at most one interval per pass.
-    const shape = [...baseShape];
+    // Alternate the two cells, mutating at most one interval per pass.
+    const motif = motifs[ci % 2];
+    const shape = [...baseShapes[ci % 2]];
     if (ci>0 && shape.length && Math.random()<.4) {
       const j = (Math.random()*shape.length)|0;
       shape[j] = clamp(shape[j] + (Math.random()<.5?-1:1), -2, 2);
@@ -3474,7 +3414,7 @@ function generateDrumSection(mod, lengthBars) {
 }
 
 // Build one complete section — chords/melody/bass + drums
-function buildElementalSection(elCfg, sectionType, lengthBars) {
+async function buildElementalSection(elCfg, sectionType, lengthBars) {
   const style    = elCfg.sections[sectionType] || 'walkdown';
   const drumMod  = elCfg.drums[sectionType]    || elCfg.drums.A;
   const full     = sectionType !== 'intro';
@@ -3487,8 +3427,21 @@ function buildElementalSection(elCfg, sectionType, lengthBars) {
         kickHits.push({ beatStart: bar*4+b });
   }
 
-  // Chord / melody / bass tracks via existing generators
-  const rawTracks = generateHarmonicProgression(elCfg.rootPc, style);
+  // Harmonic source: prefer a random library clip for this element — the
+  // hand-curated progressions are far richer than the four built-in
+  // patterns. Falls back to the pattern generator if no clip loads
+  // (chip + dual elements have no library pool and always use patterns).
+  let rawTracks = null;
+  const clipPool = (typeof ELEMENTAL_CHORDS !== 'undefined' ? ELEMENTAL_CHORDS : [])
+    .filter(c => Array.isArray(c.e) && c.e.includes(elCfg.name));
+  if (clipPool.length && !elCfg.chipMode) {
+    const entry = clipPool[(Math.random()*clipPool.length)|0];
+    try {
+      const r = await fetch(encodeURI(entry.p));
+      if (r.ok) rawTracks = parseMidi(await r.arrayBuffer()).sections['A'].tracks;
+    } catch(e) { /* offline → pattern fallback */ }
+  }
+  if (!rawTracks) rawTracks = generateHarmonicProgression(elCfg.rootPc, style);
 
   // Tile the progression (typically 4 bars) to fill the whole section —
   // otherwise the back half of an 8-bar section is drums-only: no bass,
@@ -3498,13 +3451,17 @@ function buildElementalSection(elCfg, sectionType, lengthBars) {
     let progEnd = 0;
     for (const n of t.notes) progEnd = Math.max(progEnd, n.beatStart + n.duration);
     const progBars = Math.max(1, Math.ceil(progEnd / 4));
-    const reps = Math.max(1, Math.floor(lengthBars / progBars));
-    if (reps > 1) {
-      const orig = t.notes;
+    const reps = Math.max(1, Math.ceil(lengthBars / progBars));
+    if (reps > 1 || progBars > lengthBars) {
+      const orig = t.notes, secBeats = lengthBars * 4;
       t.notes = [];
       for (let rep = 0; rep < reps; rep++)
-        for (const n of orig)
-          t.notes.push({ ...n, id: uid(), beatStart: n.beatStart + rep * progBars * 4 });
+        for (const n of orig) {
+          const bs = n.beatStart + rep * progBars * 4;
+          if (bs < secBeats - 0.01)
+            t.notes.push({ ...n, id: uid(), beatStart: bs,
+                           duration: Math.min(n.duration, secBeats - bs) });
+        }
     }
   }
 
@@ -3593,7 +3550,7 @@ function buildElementalSection(elCfg, sectionType, lengthBars) {
 let _activeElement = null;
 let _tileGenCount  = 0;
 
-function generateElementalTrack() {
+async function generateElementalTrack() {
   stopPlayback();
 
   const isBlank = _tileGenCount === 0 ||
@@ -3617,7 +3574,7 @@ function generateElementalTrack() {
     project.sectionOrder = DEFS.map(d=>d.id);
     project.sections     = {};
     for (const {id,bars,type} of DEFS)
-      project.sections[id] = buildElementalSection(_activeElement, type, bars);
+      project.sections[id] = await buildElementalSection(_activeElement, type, bars);
 
     activeSectionId = 'A';
   } else {
@@ -3632,7 +3589,7 @@ function generateElementalTrack() {
       { id:`C${n}`,  bars:8, type:'C'     },
     ];
     for (const {id,bars,type} of DEFS) {
-      project.sections[id] = buildElementalSection(_activeElement, type, bars);
+      project.sections[id] = await buildElementalSection(_activeElement, type, bars);
       project.sectionOrder.push(id);
     }
   }
@@ -5406,388 +5363,6 @@ function init() {
 init();
 </script>
 
-<!-- ── GODAIGO CONDUCTOR ─────────────────────────────────────────────
-     The adaptive player, built ON the generator's engine. Each element layer
-     is generated from the MIDI libraries (midi/chords per element via
-     expandChordRoles + chord-variation pipeline; midi/drums by feel/density),
-     dropped into one looping section, and crossfaded by simulated board state.
-     Reuses the existing voices, FX, and scheduler — no second audio engine. -->
-<script>
-(function () {
-  const ELS = [
-    { key:'earth',    lib:'Earth',    emoji:'🌍', name:'Earth' },
-    { key:'water',    lib:'Water',    emoji:'💧', name:'Water' },
-    { key:'fire',     lib:'Fire',     emoji:'🔥', name:'Fire' },
-    { key:'wind',     lib:'Wind',     emoji:'💨', name:'Wind' },
-    { key:'void',     lib:'Void',     emoji:'🌌', name:'Void' },
-    { key:'catacomb', lib:'Catacomb', emoji:'⚰️', name:'Catacomb' },
-  ];
-  const byKey = Object.fromEntries(ELS.map(e => [e.key, e]));
-  const TOTAL_TILES = 7;
-  const SEC_BARS = 4;                          // one library clip per section
-  const MOVE_SECTIONS = ['A', 'B', 'A', 'C'];  // each discovered element = an ABAC movement
-
-  // Roles unlocked by how many tiles of an element have been revealed:
-  // 1 → pad + bass + melody (one click = an audible musical identity),
-  // 3 → +chords, 5 → +arpeggio. The ABAC coverage below still shapes the
-  // arc, so even a fully unlocked element isn't playing everything at once.
-  function rolesUnlocked(c) {
-    const s = new Set();
-    if (c >= 1) { s.add('Pad'); s.add('Bass Drone'); s.add('Bass Line'); s.add('Melody'); }
-    if (c >= 3) s.add('Chords');
-    if (c >= 5) s.add('Arpeggio');
-    return s;
-  }
-  // Which roles may sound in which ABAC section type — keeps chords & arps
-  // sparse (C only) instead of "annoying" everywhere. The glue pad is the one
-  // constant: a soft stable element for the ear to latch onto in every section.
-  const COVERAGE = {
-    A: new Set(['Pad', 'Bass Drone', 'Bass Line']),
-    B: new Set(['Pad', 'Bass Drone', 'Bass Line', 'Melody']),
-    C: new Set(['Pad', 'Bass Drone', 'Bass Line', 'Melody', 'Chords', 'Arpeggio']),
-  };
-
-  const S = { built:false, building:false, tiles:{}, gameState:'peaceful', converging:false,
-              movements:{}, layers:{}, drumProto:[], introId:null, conv:new Set() };
-  ELS.forEach(e => { S.tiles[e.key] = 0; });
-  let _seq = 0, responseOpen = false, heldVol = null;
-
-  const $ = id => document.getElementById(id);
-  const status = m => { try { if (typeof setStatus === 'function') setStatus('🎴 ' + m); } catch(e){} };
-
-  // ── Drum library ────────────────────────────────────────────────────────
-  let drumManifest = null;
-  async function pickDrum(feel, density) {
-    if (!drumManifest) {
-      try { drumManifest = (await loadManifest()).filter(e => e.deck === 'drums'); }
-      catch(e){ drumManifest = []; }
-    }
-    const pool = drumManifest.filter(e => e.feel === feel && (density ? e.density === density : !e.density));
-    return pool.length ? pool[(Math.random() * pool.length) | 0] : null;
-  }
-  // Map any GM percussion note → kick/snare/hat. These library loops live on
-  // channel 0 and use melodic-percussion notes (congas/bongos 60-75), so the
-  // generator's auto drum-detection misses them. We know they're drum files
-  // (deck:"drums"), so we classify every note ourselves.
-  function drumInstForNote(n) {
-    if (n === 35 || n === 36) return 'kick';
-    if (n === 42 || n === 44 || n === 46 || (n >= 49 && n <= 59)) return 'hat'; // hats + cymbals
-    if (n >= 68) return 'hat';                                                   // shakers/clave/triangle…
-    return 'snare';                                                             // snare, toms, congas, bongos
-  }
-  async function drumTracksFor(plan) {
-    const entry = await pickDrum(plan.feel, plan.density);
-    if (!entry) return [];
-    try {
-      const r = await fetch(encodeURI(entry.path));
-      if (!r.ok) return [];
-      const proj = parseMidi(await r.arrayBuffer());
-      const groups = { kick:[], snare:[], hat:[] };
-      const CANON = { kick:36, snare:38, hat:42 };
-      for (const t of Object.values(proj.sections['A'].tracks))
-        for (const n of t.notes) {
-          const inst = drumInstForNote(n.midiNote);
-          groups[inst].push({ ...n, id: uid(), midiNote: CANON[inst] });
-        }
-      const META = {
-        kick:  { label:'Kick',  vol:0.78, color:'#ff8a65' },
-        snare: { label:'Snare', vol:0.62, color:'#a5d6a7' },
-        hat:   { label:'Hat',   vol:0.48, color:'#80deea' },
-      };
-      const out = [];
-      for (const inst of ['kick','snare','hat']) {
-        if (!groups[inst].length) continue;
-        out.push({
-          id: uid(), label: META[inst].label, instrument: inst, color: META[inst].color,
-          volume: META[inst].vol, muted: false, soloed: false, reverbSend: 0.05,
-          notes: groups[inst], effects: { ...DEFAULT_FX(), ...(INST_FILTER[inst] || {}) },
-        });
-      }
-      if (typeof applyFxStyleToTracks === 'function') applyFxStyleToTracks(out);
-      return out;
-    } catch(e){ return []; }
-  }
-
-  // ── A proto track, cloned per section (each section needs its own copies) ─
-  function cloneTrack(p) {
-    return {
-      id: uid(), label: p.label, instrument: p.instrument, color: p.color || '#8a86a8',
-      volume: p.volume, muted: !!p.muted, soloed: false,
-      reverbSend: p.reverbSend == null ? 0.1 : p.reverbSend,
-      notes: (p.notes || []).map(n => ({ ...n, id: uid() })),
-      effects: { ...(p.effects || DEFAULT_FX()) },
-      sample: p.sample ? { ...p.sample } : undefined,
-    };
-  }
-
-  // ── Pick distinct library clips for an element so A/B/C differ ────────────
-  function elementClips(el, n) {
-    const pool = (typeof ELEMENTAL_CHORDS !== 'undefined' ? ELEMENTAL_CHORDS : [])
-      .filter(c => Array.isArray(c.e) && c.e.includes(el.lib));
-    const shuffled = [...pool].sort(() => Math.random() - 0.5);
-    const out = [];
-    for (let i = 0; i < n; i++) out.push(shuffled.length ? shuffled[i % shuffled.length] : null);
-    return out;   // entries only repeat if the element's pool is smaller than n
-  }
-
-  // ── One clip → its five role tracks, voiced with the soft Unflip mp3s
-  // (soft-guitar bassline + pitch correction, soft synth melody, organ chords).
-  // Each call re-rolls its own random bass groove, so B/C differ from A. ──────
-  async function rolesFromEntry(entry, style) {
-    let roles = [];
-    if (!entry) return roles;
-    try {
-      const r = await fetch(encodeURI(entry.p));
-      if (r.ok) {
-        const proj = parseMidi(await r.arrayBuffer());
-        roles = expandChordRoles(proj.sections['A'].tracks,
-          { chordStyle: style, arp: 'light', melody: true, bassLine: true, bass: true }) || [];
-      }
-    } catch(e){ /* silent if the fetch fails */ }
-    for (const t of roles) {
-      const p = (typeof TILE_TRACK_FX !== 'undefined') && TILE_TRACK_FX[t.label];
-      if (p) {
-        t.instrument = p.instrument; t.volume = p.volume; t.reverbSend = p.reverbSend;
-        t.effects = { ...DEFAULT_FX(), ...(p.fx || {}) };
-        if (p.sample) t.sample = { ...p.sample };   // soft guitar / synth mp3 + pitch correction
-      }
-    }
-    // Pinned 🧷 FX state restyles the movement's voices before they're cloned
-    if (typeof applyFxStyleToTracks === 'function') applyFxStyleToTracks(roles);
-    return roles;
-  }
-
-  // ── The constant drum foundation: one randomly appropriate groove that
-  // plays under every section and never changes. ──────────────────────────
-  async function buildDrums() {
-    const feel = ['4otf', 'groovy', 'halftime'][(Math.random() * 3) | 0];
-    let tracks = await drumTracksFor({ feel, density: null });
-    if (!tracks.length) tracks = await drumTracksFor({ feel: 'percussion', density: 'medium' });
-    S.drumProto = tracks;
-  }
-  function drumSection(id) {
-    const sec = makeSection(id); sec.lengthBars = SEC_BARS;
-    for (const dp of S.drumProto) { const t = cloneTrack(dp); t.muted = false; sec.tracks[t.id] = t; }
-    return sec;
-  }
-
-  // ── Discovering an element appends its ABAC movement — the song gets longer.
-  // A repeats; B and C are *different* progressions (each with its own random
-  // bass groove), so the movement is a real song form, not one looping clip.
-  const SECTION_STYLE = { A: 'stab', B: 'pump', C: 'stab' };
-  async function addMovement(el) {
-    const [clipA, clipB, clipC] = elementClips(el, 3);
-    const protoByType = {
-      A: await rolesFromEntry(clipA, SECTION_STYLE.A),
-      B: await rolesFromEntry(clipB, SECTION_STYLE.B),
-      C: await rolesFromEntry(clipC, SECTION_STYLE.C),
-    };
-    const ids = []; S.layers[el.key] = [];
-    for (const stype of MOVE_SECTIONS) {
-      const protos = protoByType[stype] || [];
-      const id = 'GO' + (_seq++);
-      const sec = drumSection(id);                       // constant drums under every section
-      for (const proto of protos) {
-        const t = cloneTrack(proto);
-        t.element = el.key; t.role = proto.label; t.sectionType = stype;
-        t._baseVol = proto.volume; t.volume = 0; t.muted = true;
-        sec.tracks[t.id] = t; S.layers[el.key].push(t);
-      }
-      project.sections[id] = sec; project.sectionOrder.push(id); ids.push(id);
-    }
-    S.movements[el.key] = ids;
-    // Movement sections are never the "active" (edited) section, so their sample
-    // buffers won't auto-load. Preload them — this also runs the pitch-correction
-    // (estimateSampleRootMidi) for the soft-guitar/synth/organ mp3 voices.
-    for (const t of S.layers[el.key])
-      if (typeof SAMPLE_INSTRUMENT_BY_ID !== 'undefined' && SAMPLE_INSTRUMENT_BY_ID[t.instrument])
-        ensureSampleInstrumentLoaded(t);
-    applyElement(el.key);
-  }
-
-  // Show/hide an element's role tracks per its tile count + ABAC coverage.
-  function audible(elKey, t) {
-    if (S.converging && S.conv.has(elKey)) return true;     // finale: full part everywhere
-    return rolesUnlocked(S.tiles[elKey]).has(t.role) && (COVERAGE[t.sectionType] || COVERAGE.A).has(t.role);
-  }
-  function applyElement(elKey) {
-    for (const t of (S.layers[elKey] || [])) {
-      const on = audible(elKey, t);
-      const target = on ? (t._baseVol || 0.6) : 0;
-      if (on && t.muted) t.muted = false;
-      t.volume = target;
-      const eng = trackEngines[t.id];
-      if (eng) eng.trackGain.gain.setTargetAtTime(target, audioCtx.currentTime, 0.9);
-      if (!on && !t.muted) setTimeout(() => { if (!audible(elKey, t)) t.muted = true; }, 1100);
-    }
-  }
-
-  async function buildBoard() {
-    if (S.building) return;
-    S.building = true;
-    status('new game — laying down a drum groove…');
-    await ensureAudio();
-    project = makeProject();
-    // Keep the conductor inside the low-arousal background-music zone
-    // (~70–110 BPM) regardless of what the editor BPM field says.
-    project.tempo = clamp(+$('bpm-input').value || 92, 70, 110);
-    $('bpm-input').value = project.tempo;
-    project.sections = {}; project.sectionOrder = [];
-    ELS.forEach(e => { S.tiles[e.key] = 0; });
-    S.movements = {}; S.layers = {}; S.converging = false; S.conv = new Set(); responseOpen = false; _seq = 0;
-    await buildDrums();
-    const introId = 'GO' + (_seq++);
-    project.sections[introId] = drumSection(introId);   // drums roll before any element is found
-    project.sectionOrder.push(introId); S.introId = introId;
-    activeSectionId = project.sectionOrder[0];
-    rebuildEngines();
-    if (masterBus) masterBus.gain.setTargetAtTime(project.masterFx.masterVolume, audioCtx.currentTime, 0.05);
-    S.built = true; S.building = false;
-    status('drums rolling — reveal a tile to bring in an element');
-    refresh();
-  }
-
-  async function revealTile(elKey) {
-    if (!S.built) await buildBoard();
-    if (!isPlaying) startPlayback(0);
-    S.tiles[elKey] = Math.min(TOTAL_TILES, S.tiles[elKey] + 1);
-    if (!S.movements[elKey]) {
-      status(byKey[elKey].name + ' discovered — adding its movement…');
-      await addMovement(byKey[elKey]);
-      status(byKey[elKey].name + ' movement added — the piece is now ' + project.sectionOrder.length + ' sections');
-    } else {
-      applyElement(elKey);
-      status(byKey[elKey].name + ' deepened → ' + S.tiles[elKey] + ' tiles (' + [...rolesUnlocked(S.tiles[elKey])].length + ' roles)');
-    }
-    refresh();
-  }
-
-  // ── §4 scroll accents / response window ─────────────────────────────────
-  function bump(elKey, mult, ms) {
-    for (const t of (S.layers[elKey] || [])) {
-      const eng = trackEngines[t.id];
-      if (!eng || t.muted) continue;
-      const base = t.volume, now = audioCtx.currentTime;
-      eng.trackGain.gain.cancelScheduledValues(now);
-      eng.trackGain.gain.setTargetAtTime(base * mult, now, 0.03);
-      eng.trackGain.gain.setTargetAtTime(base, now + ms / 1000, 0.2);
-    }
-  }
-  function castScroll(elKey) {
-    if (!S.built) return;
-    if (!S.movements[elKey]) { status('cast: ' + byKey[elKey].name + ' not discovered yet'); return; }
-    bump(elKey, 1.8, 220); status('scroll cast: ' + byKey[elKey].name); refresh();
-  }
-  function counterScroll(elKey) {
-    if (!S.built) return;
-    bump(elKey, 2.1, 320);
-    if (responseOpen) setTimeout(() => resolveResponse(elKey), 360);
-    status('counter!');
-  }
-  function openResponse() {
-    if (!S.built || !masterBus) return;
-    responseOpen = true; heldVol = project.masterFx.masterVolume;
-    masterBus.gain.setTargetAtTime(heldVol * 0.6, audioCtx.currentTime, 0.15);
-    status('response window — held breath'); refresh();
-  }
-  function resolveResponse(elKey) {
-    if (!responseOpen || !masterBus) return;
-    responseOpen = false;
-    masterBus.gain.setTargetAtTime(heldVol ?? project.masterFx.masterVolume, audioCtx.currentTime + 0.05, 0.25);
-    if (elKey && S.movements[elKey]) { bump(elKey, 1.6, 500); status('response: ' + byKey[elKey].name); }
-    else status('no response — tension released');
-    refresh();
-  }
-
-  // ── §5 game state · §6 convergence · turn ───────────────────────────────
-  function setGameState(s) { S.gameState = s; status('game state: ' + s); refresh(); }
-  function turn() {
-    if (!masterBus) return;
-    const v = project.masterFx.masterVolume, now = audioCtx.currentTime;
-    masterBus.gain.cancelScheduledValues(now);
-    masterBus.gain.setValueAtTime(masterBus.gain.value, now);
-    masterBus.gain.linearRampToValueAtTime(v * 0.8, now + 0.06);
-    masterBus.gain.linearRampToValueAtTime(responseOpen ? v * 0.6 : v, now + 0.4);
-    status('turn');
-  }
-  function dominant() {
-    const max = Math.max(0, ...ELS.map(e => S.tiles[e.key]));
-    return max <= 0 ? ELS.map(e => e.key) : ELS.filter(e => S.tiles[e.key] >= Math.max(1, max * 0.6)).map(e => e.key);
-  }
-  function convergence() {
-    if (!S.built) return;
-    const dom = dominant().filter(k => S.movements[k]);
-    S.converging = true; S.conv = new Set(dom); S.gameState = 'endgame';
-    ELS.forEach(e => { if (S.movements[e.key]) applyElement(e.key); });  // dominant → full part
-    status('convergence: ' + (dom.length ? dom.map(k => byKey[k].name).join(' · ') : '—')); refresh();
-  }
-
-  // ── UI ──────────────────────────────────────────────────────────────────
-  function buildUI() {
-    const castSel = $('ga-cast-el'), respSel = $('ga-resp-el');
-    if (!castSel) return;
-    ELS.forEach(e => {
-      const o = document.createElement('option'); o.value = e.key; o.textContent = e.emoji + ' ' + e.name;
-      castSel.appendChild(o); respSel.appendChild(o.cloneNode(true));
-    });
-    castSel.value = 'fire'; respSel.value = 'void';
-
-    const board = $('godaigo-board');
-    ELS.forEach(e => {
-      const c = document.createElement('div'); c.className = 'gb-cell'; c.dataset.el = e.key;
-      c.innerHTML = '<div class="gb-emoji">' + e.emoji + '</div><div class="gb-name">' + e.name + '</div>'
-        + '<div class="gb-meter"><div class="gb-fill"></div></div><div class="gb-tier">—</div>';
-      c.title = 'Reveal a ' + e.name + ' tile';
-      c.addEventListener('click', () => revealTile(e.key));
-      board.appendChild(c);
-    });
-
-    $('ga-toggle').addEventListener('click', async () => {
-      if (!S.built) { await buildBoard(); startPlayback(0); }
-      else if (isPlaying) stopPlayback();
-      else startPlayback(0);
-      refresh();
-    });
-    $('ga-reset').addEventListener('click', async () => { stopPlayback(); S.built = false; await buildBoard(); });
-    $('ga-cast').addEventListener('click', () => castScroll($('ga-cast-el').value));
-    $('ga-counter').addEventListener('click', () => counterScroll($('ga-resp-el').value));
-    $('ga-window').addEventListener('click', openResponse);
-    $('ga-respond').addEventListener('click', () => resolveResponse($('ga-resp-el').value));
-    $('ga-noresp').addEventListener('click', () => resolveResponse(null));
-    $('ga-turn').addEventListener('click', turn);
-    $('ga-converge').addEventListener('click', convergence);
-    document.querySelectorAll('.ga-state').forEach(b => b.addEventListener('click', () => setGameState(b.dataset.state)));
-    refresh();
-  }
-
-  const ROLE_ABBR = [['Pad','P'],['Bass Line','B'],['Bass Drone','D'],['Melody','M'],['Chords','C'],['Arpeggio','A']];
-  function refresh() {
-    const tg = $('ga-toggle'); if (!tg) return;
-    tg.classList.toggle('on', isPlaying);
-    tg.textContent = isPlaying ? '⏹ Stop' : '▶ Play';
-    document.querySelectorAll('.gb-cell').forEach(c => {
-      const k = c.dataset.el, n = S.tiles[k], disc = !!S.movements[k];
-      const roles = ROLE_ABBR.filter(([full]) => rolesUnlocked(n).has(full)).map(([, ab]) => ab).join('');
-      c.querySelector('.gb-fill').style.width = (n / TOTAL_TILES * 100) + '%';
-      c.querySelector('.gb-tier').textContent = disc ? (n + ' · ' + (roles || '–')) : (n ? n + ' tiles' : '—');
-      c.classList.remove('tier1','tier2','tier3');
-      if (disc) c.classList.add(n >= 5 ? 'tier3' : n >= 3 ? 'tier2' : 'tier1');
-      c.style.boxShadow = disc ? (n >= 3 ? '0 0 14px rgba(154,139,224,.5)' : '0 0 8px rgba(111,127,207,.3)') : 'none';
-    });
-    document.querySelectorAll('.ga-state').forEach(b => b.classList.toggle('on', b.dataset.state === S.gameState));
-    $('ga-window').classList.toggle('on', responseOpen);
-    $('ga-converge').classList.toggle('on', S.converging);
-    const secs = S.built && project.sectionOrder ? project.sectionOrder.length : 0;
-    const moves = Object.keys(S.movements || {}).length;
-    $('ga-readout').textContent = (S.built ? ('🥁 groove · ▦' + secs + ' · ' + moves + ' element' + (moves === 1 ? '' : 's')) : 'idle')
-      + (responseOpen ? ' · ⏳' : '') + (S.converging ? ' · ✦' : '') + ' · ' + S.gameState;
-  }
-
-  setInterval(refresh, 600);
-  if (document.readyState !== 'loading') buildUI();
-  else document.addEventListener('DOMContentLoaded', buildUI);
-})();
-</script>
 
 </body>
 </html>
