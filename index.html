@@ -289,6 +289,7 @@ input[type=range]{cursor:pointer}
     <button id="btn-library" title="Browse MIDI library">📚 Library</button>
     <button id="btn-gen-chords" title="Generate chord progression (cycles: walkdown → ii-V → deceptive → twist)">🎲 Chords</button>
     <button id="btn-tile" title="Unflip tile — generate an elemental A-B-A-C track (click again to add 5 more sections)" style="font-weight:600">🎴 Unflip Tile</button>
+    <span id="build-tag" title="Generator build — confirms which code is loaded" style="font-size:11px;font-weight:600;color:#7e57c2;border:1px solid #7e57c2;border-radius:6px;padding:1px 6px;align-self:center">theme-seed b3</span>
     <button id="btn-load-demo" title="Load demo song">★ Demo</button>
     <button id="btn-reset" title="Clear saved state and start fresh" style="color:#f88">⊘ Reset</button>
   </div>
@@ -3666,7 +3667,8 @@ async function generateElementalTrack() {
   btn.title = `${_activeElement.name} — click to add 5 more sections`;
 
   const verb = _tileGenCount===1 ? 'Generated' : `+5 sections (×${_tileGenCount})`;
-  setStatus(`${_activeElement.emoji} ${verb}: ${_activeElement.name} · ${project.tempo} BPM`);
+  const buildTag = document.getElementById('build-tag');
+  setStatus(`${_activeElement.emoji} ${verb}: ${_activeElement.name} · ${project.tempo} BPM · [${buildTag?buildTag.textContent:'?'}]`);
 }
 
 // ── HARMONIC PATTERN CHORD GENERATOR ──────────────────────────────
