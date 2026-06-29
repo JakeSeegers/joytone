@@ -289,7 +289,7 @@ input[type=range]{cursor:pointer}
     <button id="btn-library" title="Browse MIDI library">📚 Library</button>
     <button id="btn-gen-chords" title="Generate chord progression (cycles: walkdown → ii-V → deceptive → twist)">🎲 Chords</button>
     <button id="btn-tile" title="Load the Five Elements theme — then click again to riff on it (transpose / re-orchestrate / re-tempo)" style="font-weight:600">☯ Load Theme</button>
-    <span id="build-tag" title="Generator build — confirms which code is loaded" style="font-size:11px;font-weight:600;color:#7e57c2;border:1px solid #7e57c2;border-radius:6px;padding:1px 6px;align-self:center">theme-centerpiece b5</span>
+    <span id="build-tag" title="Generator build — confirms which code is loaded" style="font-size:11px;font-weight:600;color:#7e57c2;border:1px solid #7e57c2;border-radius:6px;padding:1px 6px;align-self:center">theme-centerpiece b6</span>
     <button id="btn-load-demo" title="Load demo song">★ Demo</button>
     <button id="btn-reset" title="Clear saved state and start fresh" style="color:#f88">⊘ Reset</button>
   </div>
@@ -3695,7 +3695,6 @@ const THEME_ORCH = {
   eastern: ['smp_flute','smp_kalimba','smp_estr2','smp_estr1','smp_church','smp_deepbell'],
   soft:    ['smp_flute','smp_guitar','smp_estr3','smp_calmpad1','smp_softorgan','smp_bell'],
   synth:   ['flute','pluck','synth','synth','organ','bell'],
-  chip:    ['chisaw','chip','chip','chitri','chip','chip'],
 };
 const THEME_VOL = [0.85,0.60,0.62,0.50,0.55,0.72,0.90,0.85,0.70,0.50];
 
@@ -3766,8 +3765,7 @@ function themeButton() {
   // Riff: a random godai element supplies the key / tempo / palette lens.
   const el    = pickRandomElement();
   const delta = ((el.rootPc - THEME_DATA.rootPc + 18) % 12) - 6; // nearest, within ±6
-  const orch  = el.chipMode ? 'chip'
-              : ['eastern','soft','synth'][(Math.random()*3)|0];
+  const orch  = ['eastern','soft','synth'][(Math.random()*3)|0];
   project = makeThemeProject({ transpose:delta, tempo:el.tempo, orch });
   _themeRiffCount++;
   activeSectionId = project.sectionOrder[0];
