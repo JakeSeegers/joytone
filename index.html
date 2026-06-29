@@ -289,7 +289,7 @@ input[type=range]{cursor:pointer}
     <button id="btn-library" title="Browse MIDI library">📚 Library</button>
     <button id="btn-gen-chords" title="Generate chord progression (cycles: walkdown → ii-V → deceptive → twist)">🎲 Chords</button>
     <button id="btn-tile" title="Load the Five Elements theme — then click again to riff on it (transpose / re-orchestrate / re-tempo)" style="font-weight:600">☯ Load Theme</button>
-    <span id="build-tag" title="Generator build — confirms which code is loaded" style="font-size:11px;font-weight:600;color:#7e57c2;border:1px solid #7e57c2;border-radius:6px;padding:1px 6px;align-self:center">theme-centerpiece b7</span>
+    <span id="build-tag" title="Generator build — confirms which code is loaded" style="font-size:11px;font-weight:600;color:#7e57c2;border:1px solid #7e57c2;border-radius:6px;padding:1px 6px;align-self:center">theme-centerpiece b8</span>
     <button id="btn-load-demo" title="Load demo song">★ Demo</button>
     <button id="btn-reset" title="Clear saved state and start fresh" style="color:#f88">⊘ Reset</button>
   </div>
@@ -3698,12 +3698,23 @@ const THEME_ORCH = {
 };
 const THEME_VOL = [0.85,0.60,0.62,0.50,0.55,0.72,0.90,0.85,0.70,0.50];
 
+// FX baked from the user's saved 'FX 7' snapshot — the theme's default mix.
+const THEME_FX = {"Shakuhachi (Wind lead)":{"instrument":"smp_flute","volume":0.27,"reverbSend":0.28,"effects":{"reverbMix":0.2,"reverbDecay":2,"delayMix":0.22,"delayTime":0.8,"delayFeedback":0.35,"delaySync":"1/4D","pan":0,"eqHPF":20,"eqLowGain":0,"eqMidFreq":1000,"eqMidGain":0,"eqMidQ":1,"eqHighGain":0,"filterType":"bandpass","filterCutoff":7000,"filterRes":3.7,"lfoDepth":0.15,"lfoRate":14.5,"wowDepth":0.003,"distDrive":0.48,"distMix":0.2}},"Koto (Water)":{"instrument":"smp_kalimba","volume":0.6,"reverbSend":0.28,"effects":{"reverbMix":0.2,"reverbDecay":2,"delayMix":0,"delayTime":0.375,"delayFeedback":0.35,"delaySync":"free","pan":0,"eqHPF":20,"eqLowGain":0,"eqMidFreq":1000,"eqMidGain":0,"eqMidQ":1,"eqHighGain":0,"filterType":"bandpass","filterCutoff":1500,"filterRes":0.5,"lfoDepth":0,"lfoRate":1,"wowDepth":0.003,"distDrive":0.08,"distMix":0.07}},"Shamisen (Fire)":{"instrument":"smp_estr2","volume":0.62,"reverbSend":0.28,"effects":{"reverbMix":0.2,"reverbDecay":2,"delayMix":0,"delayTime":0.375,"delayFeedback":0.35,"delaySync":"free","pan":0,"eqHPF":20,"eqLowGain":0,"eqMidFreq":1000,"eqMidGain":0,"eqMidQ":1,"eqHighGain":0,"filterType":"bandpass","filterCutoff":1500,"filterRes":0.5,"lfoDepth":0,"lfoRate":1,"wowDepth":0.003,"distDrive":0.08,"distMix":0.07}},"Strings (drone)":{"instrument":"smp_estr1","volume":0.5,"reverbSend":0.28,"effects":{"reverbMix":0.2,"reverbDecay":2,"delayMix":0,"delayTime":0.375,"delayFeedback":0.35,"delaySync":"free","pan":0,"eqHPF":20,"eqLowGain":0,"eqMidFreq":1000,"eqMidGain":0,"eqMidQ":1,"eqHighGain":0,"filterType":"bandpass","filterCutoff":1500,"filterRes":0.5,"lfoDepth":0,"lfoRate":1,"wowDepth":0.003,"distDrive":0.08,"distMix":0.07}},"Horn (the old empire)":{"instrument":"chitri","volume":0.18,"reverbSend":0.28,"effects":{"reverbMix":0.2,"reverbDecay":2,"delayMix":0.23,"delayTime":0.52,"delayFeedback":0.35,"delaySync":"1/8D","pan":0,"eqHPF":20,"eqLowGain":0,"eqMidFreq":1000,"eqMidGain":0,"eqMidQ":1,"eqHighGain":0,"filterType":"bandpass","filterCutoff":1500,"filterRes":0.5,"lfoDepth":0.81,"lfoRate":0.1,"wowDepth":0.003,"distDrive":0.08,"distMix":0.28}},"Temple bells (Void)":{"instrument":"bell","volume":0.56,"reverbSend":1,"effects":{"reverbMix":0.2,"reverbDecay":2,"delayMix":0.63,"delayTime":0.65,"delayFeedback":0.66,"delaySync":"1/4D","pan":-0.08,"eqHPF":150,"eqLowGain":9,"eqMidFreq":2750,"eqMidGain":-9.5,"eqMidQ":1,"eqHighGain":-5.5,"filterType":"notch","filterCutoff":4000,"filterRes":2.4,"lfoDepth":0.66,"lfoRate":8.1,"wowDepth":0.003,"distDrive":0.2,"distMix":0.43}},"Taiko (Earth)":{"instrument":"kick","volume":0.9,"reverbSend":0.06,"effects":{"reverbMix":0.2,"reverbDecay":2,"delayMix":0,"delayTime":0.375,"delayFeedback":0.35,"delaySync":"free","pan":0,"eqHPF":20,"eqLowGain":0,"eqMidFreq":1000,"eqMidGain":0,"eqMidQ":1,"eqHighGain":0,"filterType":"bandpass","filterCutoff":1500,"filterRes":0.5,"lfoDepth":0,"lfoRate":1,"wowDepth":0.003,"distDrive":0.08,"distMix":0.07}},"Kick":{"instrument":"kick","volume":1,"reverbSend":0.06,"effects":{"reverbMix":0.2,"reverbDecay":2,"delayMix":0,"delayTime":0.375,"delayFeedback":0.35,"delaySync":"free","pan":0,"eqHPF":100,"eqLowGain":6,"eqMidFreq":1000,"eqMidGain":-6.5,"eqMidQ":1,"eqHighGain":3.5,"filterType":"lowpass","filterCutoff":7300,"filterRes":6,"lfoDepth":0.35,"lfoRate":1,"wowDepth":0.003,"distDrive":0.82,"distMix":0.59}},"Snare":{"instrument":"snare","volume":0.7,"reverbSend":0.06,"effects":{"reverbMix":0.2,"reverbDecay":2,"delayMix":0,"delayTime":0.375,"delayFeedback":0.35,"delaySync":"free","pan":0,"eqHPF":20,"eqLowGain":0,"eqMidFreq":1000,"eqMidGain":0,"eqMidQ":1,"eqHighGain":0,"filterType":"bandpass","filterCutoff":1500,"filterRes":0.5,"lfoDepth":0,"lfoRate":1,"wowDepth":0.003,"distDrive":0.08,"distMix":0.07}},"Hat":{"instrument":"smp_hat2","volume":0.16,"reverbSend":0.06,"effects":{"reverbMix":0.2,"reverbDecay":2,"delayMix":0,"delayTime":0.12,"delayFeedback":0.35,"delaySync":"free","pan":0,"eqHPF":20,"eqLowGain":7.5,"eqMidFreq":800,"eqMidGain":6,"eqMidQ":1,"eqHighGain":-11.5,"filterType":"lowpass","filterCutoff":800,"filterRes":4.7,"lfoDepth":0,"lfoRate":1,"wowDepth":0.003,"distDrive":0.04,"distMix":0.05}}};
+const THEME_MASTER_FX = {"compThreshold":-24,"compRatio":6,"compMakeup":0,"bassGain":8,"bassFreq":120,"masterVolume":0.58,"hissLevel":0.002,"derezBits":13,"derezRate":0.26,"derezMix":0.57};
+
 // Build the theme as a native project, optionally transposed / re-orchestrated
 // / re-tempo'd for a riff. transpose is in semitones (drums never move).
-function makeThemeProject({ transpose=0, tempo=THEME_DATA.tempo, orch='eastern' }={}) {
+//
+// Each track's instrument / volume / reverb / FX default to the user's baked
+// "FX 7" mix (THEME_FX, keyed by track name), and the master bus to
+// THEME_MASTER_FX — so Load Theme comes up sounding finished, not dry. A riff
+// passes an `orch` palette, which re-voices the 6 melodic instruments on top of
+// the baked FX (the mix character — bright lead, driven kick — is preserved).
+function makeThemeProject({ transpose=0, tempo=THEME_DATA.tempo, orch=null }={}) {
   const proj = makeProject({ title:'Five Elements Theme', tempo });
   proj.sections = {}; proj.sectionOrder = [];
-  const orchSet = THEME_ORCH[orch] || THEME_ORCH.eastern;
+  proj.masterFx = { ...DEFAULT_MASTER_FX(), ...THEME_MASTER_FX };
+  const orchSet = orch ? (THEME_ORCH[orch] || THEME_ORCH.eastern) : null;
   const colors  = THEME_DATA.tracks.map((_,i)=>TRACK_COLORS[i%TRACK_COLORS.length]);
 
   for (const sec of THEME_SECTIONS) {
@@ -3712,7 +3723,12 @@ function makeThemeProject({ transpose=0, tempo=THEME_DATA.tempo, orch='eastern' 
     THEME_DATA.tracks.forEach((td, ti) => {
       const inSec = td.notes.filter(([b]) => b >= lo-0.001 && b < hi-0.001);
       if (!inSec.length) return;
-      const inst = td.drum ? td.inst : (ti < orchSet.length ? orchSet[ti] : td.inst);
+      const fxDef = THEME_FX[td.name];
+      // Riffs re-voice the melodic tracks via the orch palette; otherwise use
+      // the baked instrument (falling back to the raw embed mapping).
+      const inst = (!td.drum && orchSet && ti < orchSet.length)
+        ? orchSet[ti]
+        : (fxDef?.instrument ?? td.inst);
       const notes = inSec.map(([b,n,d,v]) => ({
         id: uid(), beatStart:+(b-lo).toFixed(3), duration:d,
         midiNote: td.drum ? n : n+transpose, velocity:v,
@@ -3720,8 +3736,9 @@ function makeThemeProject({ transpose=0, tempo=THEME_DATA.tempo, orch='eastern' 
       const tid = uid();
       secObj.tracks[tid] = {
         id:tid, label:td.name, instrument:inst, color:colors[ti],
-        volume: THEME_VOL[ti] ?? 0.7, muted:false, soloed:false,
-        reverbSend: td.drum ? 0.06 : 0.28, notes, effects:DEFAULT_FX(),
+        volume: fxDef?.volume ?? THEME_VOL[ti] ?? 0.7, muted:false, soloed:false,
+        reverbSend: fxDef?.reverbSend ?? (td.drum ? 0.06 : 0.28), notes,
+        effects: fxDef ? { ...DEFAULT_FX(), ...fxDef.effects } : DEFAULT_FX(),
       };
     });
     proj.sections[sec.id] = secObj;
