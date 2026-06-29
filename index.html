@@ -289,7 +289,7 @@ input[type=range]{cursor:pointer}
     <button id="btn-library" title="Browse MIDI library">📚 Library</button>
     <button id="btn-gen-chords" title="Generate chord progression (cycles: walkdown → ii-V → deceptive → twist)">🎲 Chords</button>
     <button id="btn-tile" title="Unflip tile — generate an elemental A-B-A-C track (click again to add 5 more sections)" style="font-weight:600">🎴 Unflip Tile</button>
-    <span id="build-tag" title="Generator build — confirms which code is loaded" style="font-size:11px;font-weight:600;color:#7e57c2;border:1px solid #7e57c2;border-radius:6px;padding:1px 6px;align-self:center">theme-seed b3</span>
+    <span id="build-tag" title="Generator build — confirms which code is loaded" style="font-size:11px;font-weight:600;color:#7e57c2;border:1px solid #7e57c2;border-radius:6px;padding:1px 6px;align-self:center">theme-seed b4</span>
     <button id="btn-load-demo" title="Load demo song">★ Demo</button>
     <button id="btn-reset" title="Clear saved state and start fresh" style="color:#f88">⊘ Reset</button>
   </div>
@@ -3933,6 +3933,27 @@ function expandChordRoles(incomingTracks, opts={}) {
     for (const n of t.notes) allNotes.push(n);
   allNotes.sort((a,b) => a.beatStart - b.beatStart || a.midiNote - b.midiNote);
   if (!allNotes.length) return null;
+
+  // Theme bed: when a seed is present, snap the whole harmonic source into the
+  // theme's collection BEFORE chords/bass/arp/pad derive from it. The diatonic
+  // pattern generators put thirds/sevenths/chromatic walkdowns outside the
+  // scale (Ab, C#, F#…) — a wall of off-theme arpeggio that buried the modal
+  // melody. Snapping at the source makes the entire arrangement speak the theme
+  // and stops the bed from fighting the tune. (Root + fifth survive untouched —
+  // both are in miyako-bushi — so power chords stay consonant.)
+  if (o.melodySeed) {
+    const collPcs = o.melodySeed.scale.map(iv => (o.melodySeed.rootPc + iv) % 12);
+    const snap = midi => {
+      const pc = ((midi % 12) + 12) % 12;
+      let best = 0, bd = 99;
+      for (const c of collPcs) {
+        let d = (c - pc + 12) % 12; if (d > 6) d -= 12;
+        if (Math.abs(d) < bd) { bd = Math.abs(d); best = d; }
+      }
+      return midi + best;
+    };
+    for (const n of allNotes) n.midiNote = snap(n.midiNote);
+  }
 
   const chords = groupChords(allNotes);
 
