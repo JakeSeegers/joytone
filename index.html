@@ -44,20 +44,6 @@ html,body{height:100%;overflow:hidden;background:#111;color:#ccc;font:13px/1.4 '
 #section-strip .lbl{color:#666;font-size:11px;white-space:nowrap}
 #section-tabs{display:flex;gap:4px}
 
-/* Elemental strip */
-#elemental-strip{
-  display:flex;align-items:center;gap:6px;padding:4px 10px;
-  background:#14141c;border-bottom:1px solid #2a2a35;flex-shrink:0;
-  min-height:32px;flex-wrap:wrap
-}
-#elemental-strip .lbl{color:#666;font-size:11px;white-space:nowrap}
-#elemental-buttons{display:flex;gap:4px;flex-wrap:wrap}
-.el-btn{padding:2px 9px;font-size:11px;border:1px solid #444;border-radius:3px;background:#1e1e28;color:#ccc}
-.el-btn:hover{background:#26263a}
-.el-btn.active{background:#2d2d50;color:#fff;box-shadow:0 0 8px rgba(120,120,220,.4)}
-#btn-add-drums{padding:2px 9px;font-size:11px;margin-left:auto}
-#btn-elemental-auto{padding:2px 9px;font-size:11px}
-#btn-elemental-auto.on{background:#3a2d5a;border-color:#8877cc;color:#e8e0ff}
 
 /* ── Adaptive player + visible editor ─────────────────────────────────
    The conductor board sits above the DAW editing surface; all settings
@@ -367,14 +353,6 @@ input[type=range]{cursor:pointer}
     <div id="section-order" style="display:flex;gap:4px;align-items:center;font-size:11px;color:#aaa">
       <!-- filled by JS -->
     </div>
-  </div>
-
-  <!-- ── ELEMENTAL STRIP ──────────────────────────────────────────── -->
-  <div id="elemental-strip">
-    <span class="lbl" title="Pick an element to load &amp; loop a random matching chord progression. All 35 clips share key A so any order sounds good.">Elemental:</span>
-    <div id="elemental-buttons"><!-- filled by JS --></div>
-    <button id="btn-add-drums" title="Add the last loaded drums to the current sequence, keeping their previous mix/FX settings." disabled>🥁 Add Drums</button>
-    <button id="btn-elemental-auto" title="Auto-shuffle: at each loop boundary, swap to another random clip from the current element filter.">🎲 Auto</button>
   </div>
 
   <!-- ── MAIN (hidden in pure-player mode) ─────────────────────────── -->
@@ -3431,17 +3409,7 @@ async function buildElementalSection(elCfg, sectionType, lengthBars) {
   // hand-curated progressions are far richer than the four built-in
   // patterns. Falls back to the pattern generator if no clip loads
   // (chip + dual elements have no library pool and always use patterns).
-  let rawTracks = null;
-  const clipPool = (typeof ELEMENTAL_CHORDS !== 'undefined' ? ELEMENTAL_CHORDS : [])
-    .filter(c => Array.isArray(c.e) && c.e.includes(elCfg.name));
-  if (clipPool.length && !elCfg.chipMode) {
-    const entry = clipPool[(Math.random()*clipPool.length)|0];
-    try {
-      const r = await fetch(encodeURI(entry.p));
-      if (r.ok) rawTracks = parseMidi(await r.arrayBuffer()).sections['A'].tracks;
-    } catch(e) { /* offline → pattern fallback */ }
-  }
-  if (!rawTracks) rawTracks = generateHarmonicProgression(elCfg.rootPc, style);
+  let rawTracks = generateHarmonicProgression(elCfg.rootPc, style);
 
   // Tile the progression (typically 4 bars) to fill the whole section —
   // otherwise the back half of an 8-bar section is drums-only: no bass,
@@ -5043,190 +5011,6 @@ document.getElementById('lib-tabs').addEventListener('click', e => {
 // ── ELEMENTAL CHORD LOOPER ─────────────────────────────────────────
 // 35 curated chord MIDIs, all in key A so any random order stays consonant.
 // Tagged by element (pure) or element pair (combination).
-const ELEMENTAL_CHORDS = [
-  { e:["Earth"], p:"midi/chords/Major/A - ii V I - Triumphant.mid", n:"Earth · ii V I" },
-  { e:["Earth"], p:"midi/chords/Major/A - ii7 Vadd9 I7 - Triumphant.mid", n:"Earth · ii7 Vadd9 I7" },
-  { e:["Earth"], p:"midi/chords/Major/A - I I7 Idom7 I7 - Relaxed Playful.mid", n:"Earth · I I7 Idom7 I7" },
-  { e:["Earth"], p:"midi/chords/Major/A - I I7 Idom7 IV - Relaxed Nostalgic.mid", n:"Earth · I I7 Idom7 IV" },
-  { e:["Earth"], p:"midi/chords/Major/A - I IV ii V - Joyful Triumphant.mid", n:"Earth · I IV ii V" },
-  { e:["Water"], p:"midi/chords/Minor/A - i III iv VI - Nostalgic Romantic.mid", n:"Water · i III iv VI" },
-  { e:["Water"], p:"midi/chords/Major/A - I iii IV vi - Romantic Nostalgic.mid", n:"Water · I iii IV vi" },
-  { e:["Water"], p:"midi/chords/Minor/A - i III VII VI - Nostalgic Romantic.mid", n:"Water · i III VII VI" },
-  { e:["Water"], p:"midi/chords/Minor/A - i iv III VI - Nostalgic Romantic.mid", n:"Water · i iv III VI" },
-  { e:["Water"], p:"midi/chords/Major/A - I vi I IV - Tender Nostalgic.mid", n:"Water · I vi I IV" },
-  { e:["Fire"], p:"midi/chords/Minor/A - i VI VII - Triumphant Rebellious.mid", n:"Fire · i VI VII" },
-  { e:["Fire"], p:"midi/chords/Modal/A - bVIIM bIIM bIIIM im - Mysterious Rebellious.mid", n:"Fire · bVIIM bIIM bIIIM im" },
-  { e:["Fire"], p:"midi/chords/Modal/A - I bIIIM bVIIM I - Triumphant Rebellious.mid", n:"Fire · I bIIIM bVIIM I" },
-  { e:["Fire"], p:"midi/chords/Modal/A - I bVIIM bVIM bIIM - Triumphant Rebellious.mid", n:"Fire · I bVIIM bVIM bIIM" },
-  { e:["Fire"], p:"midi/chords/Modal/A - I IV bVIIM IV - Joyful Rebellious.mid", n:"Fire · I IV bVIIM IV" },
-  { e:["Wind"], p:"midi/chords/Major/A - I IV vi V - Joyful Hopeful.mid", n:"Wind · I IV vi V" },
-  { e:["Wind"], p:"midi/chords/Major/A - I V I IV - Joyful Playful.mid", n:"Wind · I V I IV" },
-  { e:["Wind"], p:"midi/chords/Major/A - I7 V7 viadd9 IV7 - Playful Joyful.mid", n:"Wind · I7 V7 viadd9 IV7" },
-  { e:["Wind"], p:"midi/chords/Major/A - IV I iii IV - Playful Joyful.mid", n:"Wind · IV I iii IV" },
-  { e:["Wind"], p:"midi/chords/Major/A - IV IV I V - Joyful Hopeful.mid", n:"Wind · IV IV I V" },
-  { e:["Void"], p:"midi/chords/Modal/A - bIIIM ii bIIM I - Mysterious Surprised.mid", n:"Void · bIIIM ii bIIM I" },
-  { e:["Void"], p:"midi/chords/Modal/A - bIIM bVIM biii bviim - Mysterious Surprised.mid", n:"Void · bIIM bVIM biii bviim" },
-  { e:["Void"], p:"midi/chords/Modal/A - bIIM ivm biii im - Mysterious Dark.mid", n:"Void · bIIM ivm biii im" },
-  { e:["Void"], p:"midi/chords/Modal/A - bVIM bVIIm im bIIM - Mysterious Dark.mid", n:"Void · bVIM bVIIm im bIIM" },
-  { e:["Void"], p:"midi/chords/Modal/A - I bIIM I iii - Surprised Mysterious.mid", n:"Void · I bIIM I iii" },
-  { e:["Earth","Water"], p:"midi/chords/Modal/A - I I7 Idom7 IV ivm I - Relaxed Nostalgic.mid", n:"Earth·Water · I I7 Idom7 IV ivm I" },
-  { e:["Earth","Fire"], p:"midi/chords/Modal/A - I IV V bVIIM - Triumphant Rebellious.mid", n:"Earth·Fire · I IV V bVIIM" },
-  { e:["Earth","Wind"], p:"midi/chords/Modal/A - ii bVIIM7 I - Hopeful Triumphant.mid", n:"Earth·Wind · ii bVIIM7 I" },
-  { e:["Earth","Void"], p:"midi/chords/Modal/A - I bIIIM bVIIM IV - Triumphant Mysterious.mid", n:"Earth·Void · I bIIIM bVIIM IV" },
-  { e:["Water","Fire"], p:"midi/chords/Minor/A - VI VII i III - Triumphant Nostalgic.mid", n:"Water·Fire · VI VII i III" },
-  { e:["Water","Wind"], p:"midi/chords/Modal/A - im bVIM im IV - New Nostalgic Hopeful.mid", n:"Water·Wind · im bVIM im IV" },
-  { e:["Water","Void"], p:"midi/chords/Modal/A - bVIM7 ivmadd9 I - Spiritual Nostalgic.mid", n:"Water·Void · bVIM7 ivmadd9 I" },
-  { e:["Fire","Wind"], p:"midi/chords/Major/A - I IV V - Joyful Excited.mid", n:"Fire·Wind · I IV V" },
-  { e:["Fire","Void"], p:"midi/chords/Minor/A - i ii v i - Mysterious Triumphant.mid", n:"Fire·Void · i ii v i" },
-  { e:["Wind","Void"], p:"midi/chords/Modal/A - I vi bVIM V - New Surprised Mysterious.mid", n:"Wind·Void · I vi bVIM V" },
-  { e:["Catacomb"], p:"midi/chords/Minor/A - i i iv iv v7 ii5 v v7 - Dark Mysterious.mid", n:"Catacomb · i iv v7 ii v7" },
-  { e:["Catacomb"], p:"midi/chords/Minor/A - i vdim iv VI - Dark Nostalgic.mid", n:"Catacomb · i vdim iv VI" },
-  { e:["Catacomb"], p:"midi/chords/Minor/A - i7 VI III7 VII6 i i7 III7 iv7 - Dark Nostalgic.mid", n:"Catacomb · i7 VI III7 VII6" },
-  { e:["Catacomb"], p:"midi/chords/Minor/A - VII iv v i - Mysterious Dark.mid", n:"Catacomb · VII iv v i" },
-  { e:["Catacomb"], p:"midi/chords/Minor/A - i ii v III i ii v VII - Mysterious Dramatic.mid", n:"Catacomb · i ii v III" },
-  { e:["Void","Catacomb"], p:"midi/chords/Modal/A - I ivm bIIIM bVIIM - Mysterious Nostalgic.mid", n:"Void·Catacomb · I ivm bIIIM bVIIM" },
-  { e:["Fire","Catacomb"], p:"midi/chords/Modal/A - VIM bVIM im bVIIM - Surprised Rebellious.mid", n:"Fire·Catacomb · VIM bVIM im bVIIM" },
-];
-
-// Per-element voicing/instrument profile feeding expandChordRoles().
-const ELEMENT_ORDER = ['Earth','Water','Fire','Wind','Void','Catacomb'];
-const ELEMENT_PROFILE = {
-  Earth:    { chordInst:'organ',     chordReverb:0.18, color:'#ffd54f', arp:'off',   icon:'🜃' },
-  Water:    { chordInst:'flute',     chordReverb:0.32, color:'#4fc3f7', arp:'off',   icon:'🜄' },
-  Fire:     { chordInst:'synth',     chordReverb:0.12, color:'#ff6b6b', arp:'full',  arpInst:'pluck',   icon:'🜂' },
-  Wind:     { chordInst:'bell',      chordReverb:0.36, color:'#aed581', arp:'light', arpInst:'marimba', icon:'🜁' },
-  Void:     { chordInst:'synth',     chordReverb:0.52, color:'#ba68c8', arp:'off',   chordVol:0.6, icon:'◯' },
-  Catacomb: { chordInst:'smp_church',chordReverb:0.46, color:'#8d6e63', arp:'light', arpInst:'pluck', chordVol:0.62, icon:'⚰' },
-};
-const ARP_RANK = { off:0, light:1, full:2 };
-
-// Merge one or two element profiles into expandChordRoles options.
-function profileFor(elements) {
-  const ps = elements.map(e => ELEMENT_PROFILE[e]).filter(Boolean);
-  if (!ps.length) return {};
-  const p0 = ps[0];
-  let arp = 'off';
-  for (const p of ps) if (ARP_RANK[p.arp||'off'] > ARP_RANK[arp]) arp = p.arp || 'off';
-  const arpProvider = ps.find(p => (p.arp||'off') === arp && p.arpInst) || p0;
-  return {
-    chordInst: p0.chordInst,
-    chordVol:  p0.chordVol || 0.7,
-    chordReverb: Math.max(...ps.map(p => p.chordReverb || 0)),
-    chordColor: p0.color,
-    chordFx: {},
-    bass: true,
-    arp,
-    arpInst: arpProvider.arpInst || 'pluck',
-  };
-}
-
-let elementalFilter = 'Any';
-let elementalAuto = false;
-let elementalCurrent = null;
-
-function elementalPool(filter) {
-  return filter === 'Any' ? ELEMENTAL_CHORDS : ELEMENTAL_CHORDS.filter(c => c.e.includes(filter));
-}
-function pickRandomElemental(filter, exclude) {
-  const pool = elementalPool(filter);
-  const choices = pool.length > 1 ? pool.filter(c => c !== exclude) : pool;
-  return choices[Math.floor(Math.random() * choices.length)] || null;
-}
-
-async function fetchElementalRoles(entry) {
-  const r = await fetch(encodeURI(entry.p));
-  if (!r.ok) throw new Error('HTTP ' + r.status);
-  const parsed = parseMidi(await r.arrayBuffer());
-  const roles = expandChordRoles(parsed.sections['A'].tracks, profileFor(entry.e));
-  if (!roles) throw new Error('empty MIDI');
-  applyFxStyleToTracks(roles);
-  return roles;
-}
-
-// Replace the active section's tracks with a freshly-built elemental arrangement.
-function applyElementalRoles(roles, entry) {
-  const sec = project.sections[activeSectionId];
-  captureLastDrums(sec);  // remember any drums before they're replaced
-  for (const id of Object.keys(sec.tracks)) {
-    trackEngines[id]?.destroy(); delete trackEngines[id];
-    delete sampleBuffers[id]; delete xfadeBuffers[id]; delete sec.tracks[id];
-  }
-  let maxBeat = 4;
-  for (const t of roles) { sec.tracks[t.id] = t; for (const n of t.notes) maxBeat = Math.max(maxBeat, n.beatStart + n.duration); }
-  sec.lengthBars = Math.max(1, Math.ceil(maxBeat / 4));
-  selectedTrackId = roles[0]?.id || null;
-  if (audioCtx) rebuildEngines();
-  renderTrackHeaders(); renderSectionUI();
-  PR.gridDirty = true; PR.dirty = true; schedRedraw(); saveProject();
-}
-
-// Prefetch the next random clip and queue it to swap in at the next loop boundary.
-async function queueNextElemental() {
-  const next = pickRandomElemental(elementalFilter, elementalCurrent);
-  if (!next) return;
-  let roles = null;
-  try { roles = await fetchElementalRoles(next); } catch(e) { /* skip a beat on error */ }
-  pendingMidiSwap = {
-    sectionId: activeSectionId,
-    applyFn: () => {
-      if (roles) { elementalCurrent = next; applyElementalRoles(roles, next); setStatus('Elemental: ' + next.n); updateElementalUI(); }
-      if (elementalAuto && isPlaying) queueNextElemental();
-    }
-  };
-}
-
-// Element button (or "Any") → load a random matching clip and loop it.
-async function startElemental(filter) {
-  await ensureAudio();
-  if (!audioCtx) return;
-  elementalFilter = filter;
-  const entry = pickRandomElemental(filter, null);
-  if (!entry) { setStatus('No clips for ' + filter, true); return; }
-  let roles;
-  try { roles = await fetchElementalRoles(entry); }
-  catch(e) { setStatus('Elemental load error: ' + e.message, true); return; }
-  elementalCurrent = entry;
-  applyElementalRoles(roles, entry);
-  setStatus('Elemental: ' + entry.n);
-  if (!isPlaying) startPlayback(0);
-  updateElementalUI();
-  if (elementalAuto) queueNextElemental();
-}
-
-function toggleElementalAuto() {
-  elementalAuto = !elementalAuto;
-  updateElementalUI();
-  if (elementalAuto && isPlaying && elementalCurrent) queueNextElemental();
-  else if (!elementalAuto && pendingMidiSwap) pendingMidiSwap = null; // stop shuffling; current clip keeps looping
-  setStatus(elementalAuto ? 'Elemental auto-shuffle ON' : 'Elemental auto-shuffle off');
-}
-
-function buildElementalUI() {
-  const wrap = document.getElementById('elemental-buttons');
-  if (!wrap) return;
-  wrap.innerHTML = '';
-  ELEMENT_ORDER.forEach(el => {
-    const b = document.createElement('button');
-    b.className = 'el-btn'; b.dataset.el = el;
-    b.textContent = ELEMENT_PROFILE[el].icon + ' ' + el;
-    b.style.borderColor = ELEMENT_PROFILE[el].color;
-    b.title = `Load & loop a random ${el} chord progression`;
-    b.addEventListener('click', () => startElemental(el));
-    wrap.appendChild(b);
-  });
-  const any = document.createElement('button');
-  any.className = 'el-btn'; any.dataset.el = 'Any'; any.textContent = '✦ Any';
-  any.title = `Load & loop a random clip from all ${ELEMENTAL_CHORDS.length}`;
-  any.addEventListener('click', () => startElemental('Any'));
-  wrap.appendChild(any);
-}
-
-function updateElementalUI() {
-  document.querySelectorAll('.el-btn').forEach(b =>
-    b.classList.toggle('active', b.dataset.el === elementalFilter && !!elementalCurrent));
-  const auto = document.getElementById('btn-elemental-auto');
-  if (auto) auto.classList.toggle('on', elementalAuto);
-}
 
 // ── LAST DRUMS ─────────────────────────────────────────────────────
 // Remembers the most-recent drum tracks (with their mix/FX) so they can be
@@ -5329,7 +5113,6 @@ document.getElementById('btn-reset').addEventListener('click', () => {
 document.getElementById('btn-add-track').addEventListener('click', async () => { await ensureAudio(); addTrack(); });
 document.getElementById('btn-add-section').addEventListener('click', addSection);
 document.getElementById('btn-dup-section').addEventListener('click', () => duplicateSection(activeSectionId));
-document.getElementById('btn-elemental-auto').addEventListener('click', toggleElementalAuto);
 document.getElementById('btn-add-drums').addEventListener('click', addLastDrums);
 
 // ── INIT ───────────────────────────────────────────────────────────
@@ -5347,7 +5130,6 @@ function init() {
   renderTrackHeaders();
   renderSectionUI();
   renderFxSnapshotUI();
-  buildElementalUI();
   updateAddDrumsButton();
 
   // Initial piano roll scroll — center on MIDI ~60-72 range
