@@ -3040,17 +3040,52 @@ const MEL_MOTIFS = [
 ];
 const MEL_CADENCE = [{o:0,d:.9},{o:1,d:2.6}];           // approach + long resolution
 
-function generateMelodyNotes(chords) {
+// ── THEME SEED ──────────────────────────────────────────────────────
+// The game's musical DNA, distilled from the recomposed Five-Elements
+// theme: the miyako-bushi ("in") scale on D — D Eb G A Bb — plus three
+// hummable hooks lifted from the lead lines. When a seed is passed to
+// generateMelodyNotes() the line is built from THIS collection (semitones
+// and all — the Eb→D "sigh" is the whole point) and the hooks are planted
+// at salient spots so the tune resurfaces inside otherwise-fresh material.
+//
+// Hooks are stored as collection-degree contours, not fixed pitches, so
+// they re-root into any element's key and stay recognizable (leitmotif
+// style). `step` is a delta in scale degrees (== an index step through the
+// laid-out collection pool); `startDeg` is the degree the hook opens on.
+const THEME = {
+  rootPc: 2,            // D
+  scale:  [0,1,5,7,8],  // miyako-bushi / "in": D Eb G A Bb (degrees 0..4)
+  tempo:  126,          // the AoE2-derived march feel (reference; lens keeps element tempo)
+  hooks: {
+    // The Call — rising 4th D→G, the opening gesture
+    call: { startDeg:0, cell:[ {o:0, d:0.9, step:0}, {o:1, d:1.9, step:+2} ] },
+    // The Turn — repeated-note figure G G G A Bb, lands at the phrase peak
+    turn: { startDeg:2, cell:[ {o:0,   d:0.5, step:0}, {o:0.5, d:0.5, step:0},
+                               {o:1,   d:0.5, step:0}, {o:1.5, d:0.5, step:+1},
+                               {o:2,   d:1.7, step:+2} ] },
+    // The Sigh — the Eb→D semitone fall, used as the answering cadence
+    sigh: { startDeg:1, cell:[ {o:0, d:0.9, step:0}, {o:1, d:2.4, step:-1} ] },
+  },
+};
+
+function generateMelodyNotes(chords, seed=null) {
   const LO=67, HI=84, CENTER=74; // G4–C6, sits above the chord voicing
   if (!chords.length) return [];
 
-  // The single pitch collection for the entire line: the pentatonic subset
-  // of the chord-derived key. (Minor keys share their relative major's
-  // pentatonic, so minor clips keep their character via chords + cadence.)
-  const keyPc = detectMelodyKey(chords);
-  const PENTA = new Set([0,2,4,7,9].map(iv => (keyPc + iv) % 12));
+  // The single pitch collection for the entire line. Without a seed: the
+  // pentatonic subset of the chord-derived key (no semitones — can't clash).
+  // With a seed: the theme's collection rooted at the seed's key, kept in
+  // degree order so the hooks index into it correctly.
+  let collPcs;
+  if (seed) {
+    collPcs = seed.scale.map(iv => (seed.rootPc + iv) % 12);
+  } else {
+    const keyPc = detectMelodyKey(chords);
+    collPcs = [0,2,4,7,9].map(iv => (keyPc + iv) % 12);
+  }
+  const COLL = new Set(collPcs);
   const pool = [];
-  for (let m=LO; m<=HI; m++) if (PENTA.has(pcOf(m))) pool.push(m);
+  for (let m=LO; m<=HI; m++) if (COLL.has(pcOf(m))) pool.push(m);
   if (!pool.length) return [];
 
   const N = chords.length;
@@ -3091,6 +3126,31 @@ function generateMelodyNotes(chords) {
   const notes = [];
   let prev = CENTER;
 
+  // ── Theme hooks ──────────────────────────────────────────────────
+  // Plant a recognizable hook from the seed. `pool` is the collection laid
+  // out ascending across the register, so one index step == one scale
+  // degree: a hook's degree-deltas index straight into it.
+  const degPc = d => collPcs[((d % collPcs.length) + collPcs.length) % collPcs.length];
+  const idxForDeg = (d, target) => {
+    const pc = degPc(d);
+    let bi = -1, bd = Infinity;
+    for (let i=0; i<pool.length; i++)
+      if (pcOf(pool[i]) === pc) { const dd = Math.abs(pool[i]-target); if (dd<bd) { bd=dd; bi=i; } }
+    return bi < 0 ? poolIdx(target) : bi;
+  };
+  const placeHook = (hook, cStart, bs, cLen, target, velBase) => {
+    const si = idxForDeg(hook.startDeg, target);
+    let last = pool[si];
+    for (const {o,d,step} of hook.cell) {
+      if (o*bs >= cLen-0.05) break;
+      last = pool[clamp(si+step, 0, pool.length-1)];
+      notes.push({ id:uid(), beatStart:cStart+o*bs,
+        duration:Math.min(d*bs, cLen-o*bs)*0.97, midiNote:last,
+        velocity: velBase + ((Math.random()*8)|0) });
+    }
+    return last;
+  };
+
   for (let ci=0; ci<N; ci++) {
     const chord  = chords[ci];
     const cStart = chord[0].beatStart;
@@ -3106,6 +3166,26 @@ function generateMelodyNotes(chords) {
 
     const isFull = ci===N-1 && N>1;
     const isHalf = !isFull && ci===half-1;
+
+    // Theme hooks: the Sigh answers the full cadence, the Call opens the
+    // phrase, the Turn lands at the arch peak. Each replaces this bar's
+    // generated cell; the rest of the line riffs around them. The half
+    // cadence keeps its open-on-the-fifth "question" (handled below).
+    if (seed) {
+      if (isFull) {
+        prev = placeHook(seed.hooks.sigh, cStart, bs, cLen, prev, 84);
+        continue;
+      }
+      if (ci===0 && N>1) {
+        prev = placeHook(seed.hooks.call, cStart, bs, cLen, CENTER, 76);
+        continue;
+      }
+      if (!isHalf && ci===peakIdx) {
+        prev = placeHook(seed.hooks.turn, cStart, bs, cLen, CENTER+7, 80);
+        continue;
+      }
+    }
+
     if (isFull || isHalf) {
       // Cadences: the full cadence lands long on the harmonic root; the
       // half cadence pauses on the fifth (or another non-root chord tone),
@@ -3440,6 +3520,9 @@ async function buildElementalSection(elCfg, sectionType, lengthBars) {
     melody:     full,
     bassLine:   full,
     kickHits,
+    // Element as lens: the theme's collection + hooks, re-rooted to this
+    // element's key so every track is unmistakably the same theme, refracted.
+    melodySeed: { rootPc: elCfg.rootPc, scale: THEME.scale, hooks: THEME.hooks },
   });
 
   const tracks = {};
@@ -3836,6 +3919,7 @@ function expandChordRoles(incomingTracks, opts={}) {
     pad:true,      padInst:'synth',    padVol:0.16,  padReverb:0.5,    padColor:'#90a4ae',
     arp:'full',    arpInst:'pluck',    arpVol:0.32,  arpReverb:0.10,   arpColor:'#ff6b6b',
     melody:true,   melodyInst:'flute', melodyVol:0.42, melodyReverb:0.30, melodyColor:'#ce93d8',
+    melodySeed: null, // theme seed (rootPc/scale/hooks) — when set, melody speaks the theme
     kickHits: [],  // { beatStart } array from kick track — locks bass line rhythm to kick
     chordStyle: 'stab', // 'held' | 'stab' | 'pump' | 'power'  — stab is now the default
     arpMode: 'standard', // 'standard' | 'chip'
@@ -4008,7 +4092,7 @@ function expandChordRoles(incomingTracks, opts={}) {
 
   // Melody — rule-based single voice above the chords
   const melodyNotes = [];
-  if (o.melody) melodyNotes.push(...generateMelodyNotes(chords));
+  if (o.melody) melodyNotes.push(...generateMelodyNotes(chords, o.melodySeed));
 
   const out = [ mkTrack('Chords',    o.chordInst,    chordNotes,    o.chordColor,    o.chordVol,    o.chordReverb,    o.chordFx||{}) ];
   if (o.pad      && padNotes.length)      out.push(mkTrack('Pad',        o.padInst,      padNotes,      o.padColor,      o.padVol,      o.padReverb,
