@@ -296,7 +296,7 @@ input[type=range]{cursor:pointer}
     <select id="gen-menu" title="Pick a specific generation (godai element × orchestration) instead of a random riff" style="font-size:11px;max-width:170px;padding:2px 4px"></select>
     <button id="btn-grow" title="Grow mode: when ON, Riff Theme appends the new riff to the END of the sequence instead of replacing it" style="font-weight:600">🌱 Grow: Off</button>
     <button id="btn-grow-fx" title="When generating a riff, use the current 🧷 All-Tracks FX (pin one first) or the theme's default FX" style="font-weight:600">🎛 FX: Default</button>
-    <span id="build-tag" title="Generator build — confirms which code is loaded" style="font-size:11px;font-weight:600;color:#7e57c2;border:1px solid #7e57c2;border-radius:6px;padding:1px 6px;align-self:center">theme-centerpiece b19</span>
+    <span id="build-tag" title="Generator build — confirms which code is loaded" style="font-size:11px;font-weight:600;color:#7e57c2;border:1px solid #7e57c2;border-radius:6px;padding:1px 6px;align-self:center">theme-centerpiece b20</span>
     <button id="btn-load-demo" title="Load demo song">★ Demo</button>
     <button id="btn-reset" title="Clear saved state and start fresh" style="color:#f88">⊘ Reset</button>
   </div>
@@ -3520,8 +3520,8 @@ function getDualElement() {
   const [a,b] = [...GODAI].sort(()=>Math.random()-.5).slice(0,2);
   const ea=ELEMENTS[a], eb=ELEMENTS[b];
   return {
-    emoji:'⚰️', name:`Catacomb: ${ea.name}+${eb.name}`, color:'#4e342e',
-    rootPc: ea.rootPc,
+    emoji:'⚰️', name:`Catacomb: ${ea.name}→${eb.name}`, color:'#4e342e',
+    rootPc: ea.rootPc, rootPc2: eb.rootPc,  // split-key journey: A then B
     orch:'blend',   // applyThemeVariation honors this hybrid palette
   };
 }
@@ -3806,15 +3806,19 @@ const THEME_MASTER_FX = {"compThreshold":-24,"compRatio":6,"compMakeup":0,"bassG
 // THEME_MASTER_FX — so Load Theme comes up sounding finished, not dry. A riff
 // passes an `orch` palette, which re-voices the 6 melodic instruments on top of
 // the baked FX (the mix character — bright lead, driven kick — is preserved).
-function makeThemeProject({ transpose=0, tempo=THEME_DATA.tempo, orch=null }={}) {
+// transpose2 + splitIndex implement a Catacomb "split-key journey": sections
+// before splitIndex use `transpose` (element A's key), sections from splitIndex
+// on use `transpose2` (element B's key) — the piece modulates partway through.
+function makeThemeProject({ transpose=0, transpose2=null, splitIndex=3, tempo=THEME_DATA.tempo, orch=null }={}) {
   const proj = makeProject({ title:'Five Elements Theme', tempo });
   proj.sections = {}; proj.sectionOrder = [];
   proj.masterFx = { ...DEFAULT_MASTER_FX(), ...THEME_MASTER_FX };
   const orchSet = orch ? (THEME_ORCH[orch] || THEME_ORCH.eastern) : null;
   const colors  = THEME_DATA.tracks.map((_,i)=>TRACK_COLORS[i%TRACK_COLORS.length]);
 
-  for (const sec of THEME_SECTIONS) {
+  THEME_SECTIONS.forEach((sec, secIdx) => {
     const lo = sec.start, hi = sec.start + sec.bars*4;
+    const tr = (transpose2 != null && secIdx >= splitIndex) ? transpose2 : transpose;
     const secObj = { id:sec.id, label:sec.id, lengthBars:sec.bars, tracks:{} };
     THEME_DATA.tracks.forEach((td, ti) => {
       const inSec = td.notes.filter(([b]) => b >= lo-0.001 && b < hi-0.001);
@@ -3827,7 +3831,7 @@ function makeThemeProject({ transpose=0, tempo=THEME_DATA.tempo, orch=null }={})
         : (fxDef?.instrument ?? td.inst);
       const notes = inSec.map(([b,n,d,v]) => ({
         id: uid(), beatStart:+(b-lo).toFixed(3), duration:d,
-        midiNote: td.drum ? n : n+transpose, velocity:v,
+        midiNote: td.drum ? n : n+tr, velocity:v,
       }));
       const tid = uid();
       secObj.tracks[tid] = {
@@ -3839,7 +3843,7 @@ function makeThemeProject({ transpose=0, tempo=THEME_DATA.tempo, orch=null }={})
     });
     proj.sections[sec.id] = secObj;
     proj.sectionOrder.push(sec.id);
-  }
+  });
   return proj;
 }
 
@@ -3890,7 +3894,13 @@ function applyThemeVariation(el, orch) {
   if (!growing) stopPlayback();
 
   const delta = ((el.rootPc - THEME_DATA.rootPc + 18) % 12) - 6; // nearest, within ±6
-  const riff  = makeThemeProject({ transpose:delta, orch });
+  // Catacomb dual: modulate to the second element's key halfway through.
+  const isDual = (el.rootPc2 != null);
+  const delta2 = isDual ? ((el.rootPc2 - THEME_DATA.rootPc + 18) % 12) - 6 : null;
+  const keyStr = isDual ? `${NOTE_NAMES[el.rootPc]}→${NOTE_NAMES[el.rootPc2]}` : NOTE_NAMES[el.rootPc];
+  const riff  = makeThemeProject(
+    isDual ? { transpose:delta, transpose2:delta2, splitIndex:3, orch }
+           : { transpose:delta, orch });
 
   // FX source: the pinned 🧷 All-Tracks style, or the baked theme default.
   const style = _growUseAllTracksFx ? activeFxStyle() : null;
@@ -3907,12 +3917,12 @@ function applyThemeVariation(el, orch) {
     const wasPlaying = isPlaying;
     appendRiffSections(riff, `r${riffN}`);
     growRefresh(
-      `${el.emoji} Grew +${riff.sectionOrder.length}: ${el.name} · key ${NOTE_NAMES[el.rootPc]} · ${orchName}${fxNote}${wasPlaying?' · still playing →':''}`);
+      `${el.emoji} Grew +${riff.sectionOrder.length}: ${el.name} · key ${keyStr} · ${orchName}${fxNote}${wasPlaying?' · still playing →':''}`);
   } else {
     project = riff;
     activeSectionId = project.sectionOrder[0];
     refreshAfterThemeLoad(
-      `${el.emoji} ${el.name} · key ${NOTE_NAMES[el.rootPc]} · ${project.tempo} BPM · ${orchName}${fxNote}`);
+      `${el.emoji} ${el.name} · key ${keyStr} · ${project.tempo} BPM · ${orchName}${fxNote}`);
   }
   btn.textContent = `${el.emoji} Riff Theme`;
   btn.style.background = el.color; btn.style.color = '#fff'; btn.style.borderColor = el.color;
@@ -5463,6 +5473,7 @@ document.getElementById('gen-menu').addEventListener('change', e => {
   e.target.value = '';   // reset so re-picking the same generation fires again
   if (g) applyThemeVariation(g.el, g.orch);
 });
+populateGenMenu();   // fill immediately at load — don't depend on init() reaching it
 document.getElementById('btn-grow').addEventListener('click', toggleGrowMode);
 document.getElementById('btn-grow-fx').addEventListener('click', toggleGrowFx);
 document.getElementById('btn-gen-chords').addEventListener('click', () => {
