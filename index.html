@@ -295,7 +295,7 @@ input[type=range]{cursor:pointer}
     <button id="btn-tile" title="Load the Five Elements theme — then click again to riff on it (transpose / re-orchestrate / re-tempo)" style="font-weight:600">☯ Load Theme</button>
     <button id="btn-grow" title="Grow mode: when ON, Riff Theme appends the new riff to the END of the sequence instead of replacing it" style="font-weight:600">🌱 Grow: Off</button>
     <button id="btn-grow-fx" title="When generating a riff, use the current 🧷 All-Tracks FX (pin one first) or the theme's default FX" style="font-weight:600">🎛 FX: Default</button>
-    <span id="build-tag" title="Generator build — confirms which code is loaded" style="font-size:11px;font-weight:600;color:#7e57c2;border:1px solid #7e57c2;border-radius:6px;padding:1px 6px;align-self:center">theme-centerpiece b15</span>
+    <span id="build-tag" title="Generator build — confirms which code is loaded" style="font-size:11px;font-weight:600;color:#7e57c2;border:1px solid #7e57c2;border-radius:6px;padding:1px 6px;align-self:center">theme-centerpiece b16</span>
     <button id="btn-load-demo" title="Load demo song">★ Demo</button>
     <button id="btn-reset" title="Clear saved state and start fresh" style="color:#f88">⊘ Reset</button>
   </div>
@@ -1933,6 +1933,7 @@ function playHat(t,dest) {
 function startPlayback(fromBeat) {
   if (!powerOn) { setStatus('⏻ Powered off — click the power button to turn the engine on'); return; }
   if (!audioCtx) return;
+  if (!project.sectionOrder.length) { setStatus('Nothing to play yet — generate a song or click the grid to start'); return; }
   isPlaying = true;
   playStartBeat = fromBeat ?? 0;
   playStartCtxTime = audioCtx.currentTime + 0.05;
@@ -2283,6 +2284,9 @@ noteCanvas.addEventListener('mousedown', async e => {
     playStartBeat = Math.max(0, beat);
     PR.dirty = true; schedRedraw(); return;
   }
+
+  // Clicking the empty grid on a fresh start creates the first section.
+  ensureStartingSection();
 
   const hit = hitTest(x, y);
   if (hit) selectTrack(hit.track.id, { render:false });
@@ -2718,6 +2722,24 @@ function addSection() {
   project.sectionOrder.push(id);
   switchSection(id);
   saveProject();
+}
+
+// First-run bootstrap: the app starts with NO sections (so a blank "A" doesn't
+// sit in front of generated songs). The moment the user clicks the empty grid,
+// create section "A" with one track so they can start. Returns true if it made
+// the section. No-op once any section exists.
+function ensureStartingSection() {
+  if (project.sectionOrder.length) return false;
+  const id = 'A';
+  project.sections = { [id]: makeSection(id) };
+  project.sectionOrder = [id];
+  activeSectionId = id;
+  const t = makeTrack();
+  project.sections[id].tracks[t.id] = t;
+  selectedTrackId = t.id;
+  if (audioCtx) trackEngines[t.id] = new TrackEngine(t);
+  renderTrackHeaders(); renderSectionUI();
+  return true;
 }
 
 function moveSectionOrder(fromIdx, toIdx) {
@@ -5568,11 +5590,12 @@ document.getElementById('btn-add-drums').addEventListener('click', addLastDrums)
 // ── INIT ───────────────────────────────────────────────────────────
 function init() {
   if (!loadSaved()) {
-    project = makeProject();
-    activeSectionId = 'A';
+    // Clean slate — no blank "A" section until the user clicks the grid to
+    // start (ensureStartingSection) or generates/loads a song.
+    project = makeProject({ sections:{}, sectionOrder:[] });
+    activeSectionId = null;
     selectedTrackId = null;
     normalizeProjectData();
-    ensureSelectedTrack();
   }
   document.getElementById('bpm-input').value = project.tempo;
   syncMasterStrip();
