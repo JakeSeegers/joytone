@@ -291,7 +291,7 @@ input[type=range]{cursor:pointer}
     <button id="btn-tile" title="Load the Five Elements theme — then click again to riff on it (transpose / re-orchestrate / re-tempo)" style="font-weight:600">☯ Load Theme</button>
     <button id="btn-grow" title="Grow mode: when ON, Riff Theme appends the new riff to the END of the sequence instead of replacing it" style="font-weight:600">🌱 Grow: Off</button>
     <button id="btn-grow-fx" title="When generating a riff, use the current 🧷 All-Tracks FX (pin one first) or the theme's default FX" style="font-weight:600">🎛 FX: Default</button>
-    <span id="build-tag" title="Generator build — confirms which code is loaded" style="font-size:11px;font-weight:600;color:#7e57c2;border:1px solid #7e57c2;border-radius:6px;padding:1px 6px;align-self:center">theme-centerpiece b10</span>
+    <span id="build-tag" title="Generator build — confirms which code is loaded" style="font-size:11px;font-weight:600;color:#7e57c2;border:1px solid #7e57c2;border-radius:6px;padding:1px 6px;align-self:center">theme-centerpiece b11</span>
     <button id="btn-load-demo" title="Load demo song">★ Demo</button>
     <button id="btn-reset" title="Clear saved state and start fresh" style="color:#f88">⊘ Reset</button>
   </div>
@@ -312,6 +312,11 @@ input[type=range]{cursor:pointer}
       <label>COMP</label>
       <input type="range" id="mc-comp" min="-40" max="0" step="1" value="-18">
       <span class="mc-val" id="mc-comp-val">−18</span>
+    </div>
+    <div class="mc-group" title="Normalize — master peak ceiling (brick-wall limiter). Caps the whole mix so no track suddenly jumps loud, without pulling volumes down. Lower = harder ceiling; 0 dB ≈ off.">
+      <label>NORM</label>
+      <input type="range" id="mc-norm" min="-24" max="0" step="0.5" value="-1">
+      <span class="mc-val" id="mc-norm-val">−1 dB</span>
     </div>
     <div class="mc-group">
       <label>HISS</label>
@@ -536,6 +541,7 @@ const DEFAULT_MASTER_FX = () => ({
   compThreshold:-18, compRatio:6, compMakeup:0,
   bassGain:0, bassFreq:120,
   masterVolume:0.6,
+  limiterCeiling:-1,   // master peak ceiling (dB) — brick-wall limiter so no track spikes loud; 0 ≈ off
   hissLevel:0.004,
   derezBits:16, derezRate:1.0, derezMix:0.0,
 });
@@ -857,7 +863,7 @@ async function ensureAudio() {
   compressor.knee.value = 8; compressor.attack.value = 0.012; compressor.release.value = 0.28;
 
   outputLimiter = audioCtx.createDynamicsCompressor();
-  outputLimiter.threshold.value = -3; outputLimiter.ratio.value = 20;
+  outputLimiter.threshold.value = project.masterFx.limiterCeiling ?? -1; outputLimiter.ratio.value = 20;
   outputLimiter.knee.value = 0; outputLimiter.attack.value = 0.001; outputLimiter.release.value = 0.05;
 
   masterBus = audioCtx.createGain();
@@ -4730,6 +4736,9 @@ function syncMasterStrip() {
   document.getElementById('mc-bass-val').textContent = (fx.bassGain >= 0 ? '+' : '') + fx.bassGain + ' dB';
   document.getElementById('mc-comp').value = fx.compThreshold;
   document.getElementById('mc-comp-val').textContent = fx.compThreshold;
+  const norm = fx.limiterCeiling ?? -1;
+  document.getElementById('mc-norm').value = norm;
+  document.getElementById('mc-norm-val').textContent = norm >= -0.01 ? 'off' : norm + ' dB';
   document.getElementById('mc-hiss').value = fx.hissLevel;
   document.getElementById('mc-hiss-val').textContent = hissLabel(fx.hissLevel);
   const bits = fx.derezBits ?? 16, rate = fx.derezRate ?? 1, mix = fx.derezMix ?? 0;
@@ -4755,6 +4764,7 @@ function applyMasterFxToAudio(timeConstant=0.05) {
     compressor.threshold.setTargetAtTime(fx.compThreshold ?? -18, now, timeConstant);
     compressor.ratio.setTargetAtTime(fx.compRatio ?? 6, now, timeConstant);
   }
+  if (outputLimiter) outputLimiter.threshold.setTargetAtTime(fx.limiterCeiling ?? -1, now, timeConstant);
   if (hissGainNode && isPlaying) {
     hissGainNode.gain.setTargetAtTime(fx.hissLevel ?? 0, now, Math.max(timeConstant, 0.25));
   }
@@ -5101,6 +5111,14 @@ document.getElementById('mc-comp').addEventListener('input', async e => {
   project.masterFx.compThreshold = v;
   await ensureAudio();
   if (compressor) compressor.threshold.setTargetAtTime(v, audioCtx.currentTime, 0.02);
+  saveProject();
+});
+document.getElementById('mc-norm').addEventListener('input', async e => {
+  const v = +e.target.value;
+  document.getElementById('mc-norm-val').textContent = v >= -0.01 ? 'off' : v + ' dB';
+  project.masterFx.limiterCeiling = v;
+  await ensureAudio();
+  if (outputLimiter) outputLimiter.threshold.setTargetAtTime(v, audioCtx.currentTime, 0.02);
   saveProject();
 });
 document.getElementById('mc-hiss').addEventListener('input', async e => {
