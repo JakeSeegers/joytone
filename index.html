@@ -296,7 +296,7 @@ input[type=range]{cursor:pointer}
     <select id="gen-menu" title="Pick a specific generation (godai element × orchestration) instead of a random riff" style="font-size:11px;max-width:170px;padding:2px 4px"></select>
     <button id="btn-grow" title="Grow mode: when ON, Riff Theme appends the new riff to the END of the sequence instead of replacing it" style="font-weight:600">🌱 Grow: Off</button>
     <button id="btn-grow-fx" title="When generating a riff, use the current 🧷 All-Tracks FX (pin one first) or the theme's default FX" style="font-weight:600">🎛 FX: Default</button>
-    <span id="build-tag" title="Generator build — confirms which code is loaded" style="font-size:11px;font-weight:600;color:#7e57c2;border:1px solid #7e57c2;border-radius:6px;padding:1px 6px;align-self:center">theme-centerpiece b18</span>
+    <span id="build-tag" title="Generator build — confirms which code is loaded" style="font-size:11px;font-weight:600;color:#7e57c2;border:1px solid #7e57c2;border-radius:6px;padding:1px 6px;align-self:center">theme-centerpiece b19</span>
     <button id="btn-load-demo" title="Load demo song">★ Demo</button>
     <button id="btn-reset" title="Clear saved state and start fresh" style="color:#f88">⊘ Reset</button>
   </div>
@@ -3512,31 +3512,28 @@ const ELEMENTS = {
   },
 };
 
+// Catacomb = a dual-element blend: two of the five godai fused. It takes the
+// first element's key and carries a 'blend' orchestration hint (a hybrid of the
+// sample + synth palettes) so it actually sounds like a fusion, not a single.
+const GODAI = ['earth','water','fire','wind','void'];
 function getDualElement() {
-  const keys = Object.keys(ELEMENTS);
-  const [a,b] = [...keys].sort(()=>Math.random()-.5).slice(0,2);
+  const [a,b] = [...GODAI].sort(()=>Math.random()-.5).slice(0,2);
   const ea=ELEMENTS[a], eb=ELEMENTS[b];
   return {
-    emoji: ea.emoji+eb.emoji, name:`${ea.name} & ${eb.name}`, color:'#4a148c',
-    tempo: Math.round((ea.tempo+eb.tempo)/2),
+    emoji:'⚰️', name:`Catacomb: ${ea.name}+${eb.name}`, color:'#4e342e',
     rootPc: ea.rootPc,
-    sections:{ intro:ea.sections.intro, A:ea.sections.A, B:eb.sections.B, C:eb.sections.C },
-    drums:{    intro:ea.drums.intro,    A:ea.drums.A,    B:eb.drums.B,    C:eb.drums.C    },
-    arp: Math.random()<.5 ? ea.arp : eb.arp,
+    orch:'blend',   // applyThemeVariation honors this hybrid palette
   };
 }
 
 function pickRandomElement() {
   const r = Math.random();
-  // The six canonical Godaigo elements, then a small chance of a chip flourish
-  // or a two-element blend so no two boards sound alike.
-  if (r < .14) return ELEMENTS.earth;
-  if (r < .28) return ELEMENTS.water;
-  if (r < .42) return ELEMENTS.fire;
-  if (r < .56) return ELEMENTS.wind;
-  if (r < .70) return ELEMENTS.void;
-  if (r < .84) return ELEMENTS.catacomb;
-  if (r < .92) return ELEMENTS.chip;
+  // The five godai elements, then a chance of a Catacomb (two-element blend).
+  if (r < .18) return ELEMENTS.earth;
+  if (r < .36) return ELEMENTS.water;
+  if (r < .54) return ELEMENTS.fire;
+  if (r < .72) return ELEMENTS.wind;
+  if (r < .85) return ELEMENTS.void;
   return getDualElement();
 }
 
@@ -3792,6 +3789,8 @@ const THEME_ORCH = {
   eastern: ['smp_flute','smp_kalimba','smp_estr2','smp_estr1','smp_church','smp_deepbell'],
   soft:    ['smp_flute','smp_guitar','smp_estr3','smp_calmpad1','smp_softorgan','smp_bell'],
   synth:   ['flute','pluck','synth','synth','organ','bell'],
+  // Catacomb / dual-blend palette — sample voices fused with synth voices.
+  blend:   ['smp_flute','pluck','smp_estr2','synth','smp_church','bell'],
 };
 const THEME_VOL = [0.85,0.60,0.62,0.50,0.55,0.72,0.90,0.85,0.70,0.50];
 
@@ -3935,13 +3934,14 @@ function themeButton() {
     return;
   }
   const el   = pickRandomElement();
-  const orch = ['eastern','soft','synth'][(Math.random()*3)|0];
+  // A Catacomb/dual carries its own 'blend' palette; singles get a random one.
+  const orch = el.orch || ['eastern','soft','synth'][(Math.random()*3)|0];
   applyThemeVariation(el, orch);
 }
 
 // Every potential generation: the original, plus each godai element × each
 // orchestration palette — exactly the space the random Riff button draws from.
-const THEME_GEN_ELEMENTS = ['earth','water','fire','wind','void','catacomb','chip'];
+const THEME_GEN_ELEMENTS = ['earth','water','fire','wind','void'];
 function buildGenerationList() {
   const list = [{
     key:'__original__', label:'☯ Theme — original (D, baked)',
