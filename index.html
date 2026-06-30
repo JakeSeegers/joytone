@@ -105,6 +105,7 @@ button.danger:hover{background:#4a1a1a;border-color:#aa3333}
 #btn-play.playing{background:#3a1e1e;border-color:#5a2a2a;color:#f77}
 #btn-power{border-color:#2a5a2a;background:#1e3e1e;color:#7f7;font-weight:600}
 #btn-power.off{border-color:#5a2a2a;background:#3a1414;color:#f66}
+#btn-brown.on{border-color:#7a5a2a;background:#3a2a14;color:#fb8}
 #btn-stop{border-color:#4a3a1a;background:#2e2414}
 #btn-stop:hover{background:#3a2d18}
 
@@ -294,7 +295,7 @@ input[type=range]{cursor:pointer}
     <button id="btn-tile" title="Load the Five Elements theme — then click again to riff on it (transpose / re-orchestrate / re-tempo)" style="font-weight:600">☯ Load Theme</button>
     <button id="btn-grow" title="Grow mode: when ON, Riff Theme appends the new riff to the END of the sequence instead of replacing it" style="font-weight:600">🌱 Grow: Off</button>
     <button id="btn-grow-fx" title="When generating a riff, use the current 🧷 All-Tracks FX (pin one first) or the theme's default FX" style="font-weight:600">🎛 FX: Default</button>
-    <span id="build-tag" title="Generator build — confirms which code is loaded" style="font-size:11px;font-weight:600;color:#7e57c2;border:1px solid #7e57c2;border-radius:6px;padding:1px 6px;align-self:center">theme-centerpiece b14</span>
+    <span id="build-tag" title="Generator build — confirms which code is loaded" style="font-size:11px;font-weight:600;color:#7e57c2;border:1px solid #7e57c2;border-radius:6px;padding:1px 6px;align-self:center">theme-centerpiece b15</span>
     <button id="btn-load-demo" title="Load demo song">★ Demo</button>
     <button id="btn-reset" title="Clear saved state and start fresh" style="color:#f88">⊘ Reset</button>
   </div>
@@ -325,6 +326,14 @@ input[type=range]{cursor:pointer}
       <label>HISS</label>
       <input type="range" id="mc-hiss" min="0" max="0.025" step="0.001" value="0.004">
       <span class="mc-val" id="mc-hiss-val">low</span>
+    </div>
+    <div class="mc-group">
+      <button id="btn-brown" title="Brown noise — a continuous ambient loop, independent of Play. Toggle on/off; set level with the slider.">🟤 Brown</button>
+    </div>
+    <div class="mc-group" title="Brown noise level">
+      <label>BROWN</label>
+      <input type="range" id="mc-brown" min="0" max="1" step="0.01" value="0.3">
+      <span class="mc-val" id="mc-brown-val">off</span>
     </div>
     <div class="sep"></div>
     <div class="mc-group" title="Bit depth — 16=clean, 8=SNES, 4=heavy crunch (turn up DEREZ to hear it)">
@@ -599,6 +608,13 @@ const trackEngines = {};      // trackId → TrackEngine instance
 const sampleBuffers = {};      // trackId → decoded AudioBuffer for loaded MP3/sample instrument
 const xfadeBuffers  = {};      // trackId → crossfade-baked loop buffer (lazy, keyed by loopStart+loopEnd)
 
+// Brown noise ambient bed — a continuously looping mp3, independent of playback.
+let brownOn       = false;    // toggle
+let brownLevel    = 0.3;      // 0..1 volume
+let brownBuffer   = null;     // decoded mp3
+let brownSource   = null;     // looping AudioBufferSourceNode
+let brownGain     = null;     // its volume node (→ masterOut)
+
 // Scheduler
 let schedInterval  = null;
 let isPlaying      = false;
@@ -797,7 +813,7 @@ function performUndo() {
 
 // ── PERSISTENCE ────────────────────────────────────────────────────
 function saveProject() {
-  try { localStorage.setItem('daw-v2', JSON.stringify({ project, activeSectionId, selectedTrackId, fxSnapshots, fxStateSticky, activeFxStateId })); }
+  try { localStorage.setItem('daw-v2', JSON.stringify({ project, activeSectionId, selectedTrackId, fxSnapshots, fxStateSticky, activeFxStateId, brownOn, brownLevel })); }
   catch(e) {}
 }
 
@@ -829,6 +845,8 @@ function loadSaved() {
     fxSnapshots = Array.isArray(data.fxSnapshots) ? data.fxSnapshots : [];
     fxStateSticky = !!data.fxStateSticky;
     activeFxStateId = data.activeFxStateId || null;
+    brownOn = !!data.brownOn;
+    brownLevel = (typeof data.brownLevel === 'number') ? data.brownLevel : 0.3;
     ensureSelectedTrack();
     return true;
   } catch(e) { return false; }
@@ -980,6 +998,37 @@ function startTapeHiss(ctx, dest) {
   lp.connect(hissGainNode);
   hissGainNode.connect(dest);
   src.start();
+}
+
+// Brown noise ambient bed: load mp3/brownnoise.mp3 once, loop it forever through
+// brownGain → masterOut (so it follows master VOL and is killed by Power off).
+// Runs independently of the transport. Call this whenever the toggle, the level,
+// or power state changes.
+async function applyBrownNoise() {
+  if (!powerOn) return;
+  await ensureAudio();
+  if (!audioCtx) return;
+  if (brownOn && brownLevel > 0) {
+    if (!brownBuffer) {
+      try { brownBuffer = await audioCtx.decodeAudioData(await (await fetch('mp3/brownnoise.mp3')).arrayBuffer()); }
+      catch (e) { setStatus('Could not load brownnoise.mp3', true); return; }
+    }
+    if (!brownGain) {
+      brownGain = audioCtx.createGain();
+      brownGain.gain.value = 0;
+      brownGain.connect(masterOut || audioCtx.destination);
+    }
+    if (!brownSource) {
+      brownSource = audioCtx.createBufferSource();
+      brownSource.buffer = brownBuffer;
+      brownSource.loop = true;
+      brownSource.connect(brownGain);
+      brownSource.start();
+    }
+    brownGain.gain.setTargetAtTime(brownLevel, audioCtx.currentTime, 0.15);
+  } else if (brownGain) {
+    brownGain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.15);
+  }
 }
 
 // ── TRACK ENGINE ───────────────────────────────────────────────────
@@ -4759,6 +4808,9 @@ function syncMasterStrip() {
   document.getElementById('mc-norm-val').textContent = norm >= -0.01 ? 'off' : norm + ' dB';
   document.getElementById('mc-hiss').value = fx.hissLevel;
   document.getElementById('mc-hiss-val').textContent = hissLabel(fx.hissLevel);
+  document.getElementById('mc-brown').value = brownLevel;
+  document.getElementById('mc-brown-val').textContent = brownOn ? Math.round(brownLevel*100)+'%' : 'off';
+  document.getElementById('btn-brown').classList.toggle('on', brownOn);
   const bits = fx.derezBits ?? 16, rate = fx.derezRate ?? 1, mix = fx.derezMix ?? 0;
   document.getElementById('mc-derez-bits').value = bits;
   document.getElementById('mc-derez-bits-val').textContent = bits === 16 ? '16' : bits+'b';
@@ -5148,6 +5200,19 @@ document.getElementById('mc-hiss').addEventListener('input', async e => {
   if (hissGainNode && isPlaying) hissGainNode.gain.setTargetAtTime(v, audioCtx.currentTime, 0.3);
   saveProject();
 });
+document.getElementById('btn-brown').addEventListener('click', async () => {
+  brownOn = !brownOn;
+  document.getElementById('btn-brown').classList.toggle('on', brownOn);
+  document.getElementById('mc-brown-val').textContent = brownOn ? Math.round(brownLevel*100)+'%' : 'off';
+  await applyBrownNoise();
+  saveProject();
+});
+document.getElementById('mc-brown').addEventListener('input', async e => {
+  brownLevel = +e.target.value;
+  document.getElementById('mc-brown-val').textContent = brownOn ? Math.round(brownLevel*100)+'%' : 'off';
+  if (brownOn) await applyBrownNoise();
+  saveProject();
+});
 
 // ── DeRez controls ─────────────────────────────────────────────────
 function applyDeRezFx() {
@@ -5439,6 +5504,7 @@ async function togglePower() {
       try { await audioCtx.resume(); } catch (e) {}
       masterOut?.gain.setTargetAtTime(project.masterFx.masterVolume, audioCtx.currentTime, 0.02);
     }
+    if (brownOn) applyBrownNoise();   // resume the ambient bed
     btn.textContent = '⏻ On';
     btn.classList.remove('off');
     setStatus('⏻ Power ON');
@@ -5448,6 +5514,7 @@ document.getElementById('btn-power').addEventListener('click', togglePower);
 
 document.getElementById('btn-play').addEventListener('click', async () => {
   await ensureAudio();
+  if (brownOn) applyBrownNoise();   // a play gesture also unlocks/resumes the brown bed
   if (isPlaying) stopPlayback();
   else startPlayback(0);
 });
