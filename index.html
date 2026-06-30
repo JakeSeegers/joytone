@@ -291,7 +291,7 @@ input[type=range]{cursor:pointer}
     <button id="btn-tile" title="Load the Five Elements theme — then click again to riff on it (transpose / re-orchestrate / re-tempo)" style="font-weight:600">☯ Load Theme</button>
     <button id="btn-grow" title="Grow mode: when ON, Riff Theme appends the new riff to the END of the sequence instead of replacing it" style="font-weight:600">🌱 Grow: Off</button>
     <button id="btn-grow-fx" title="When generating a riff, use the current 🧷 All-Tracks FX (pin one first) or the theme's default FX" style="font-weight:600">🎛 FX: Default</button>
-    <span id="build-tag" title="Generator build — confirms which code is loaded" style="font-size:11px;font-weight:600;color:#7e57c2;border:1px solid #7e57c2;border-radius:6px;padding:1px 6px;align-self:center">theme-centerpiece b9</span>
+    <span id="build-tag" title="Generator build — confirms which code is loaded" style="font-size:11px;font-weight:600;color:#7e57c2;border:1px solid #7e57c2;border-radius:6px;padding:1px 6px;align-self:center">theme-centerpiece b10</span>
     <button id="btn-load-demo" title="Load demo song">★ Demo</button>
     <button id="btn-reset" title="Clear saved state and start fresh" style="color:#f88">⊘ Reset</button>
   </div>
@@ -3786,9 +3786,13 @@ function appendRiffSections(riff, tag) {
 // Grow mode appends the riff instead of replacing; the FX toggle decides whether
 // the riff's tracks adopt the pinned 🧷 All-Tracks FX or the theme default.
 function themeButton() {
-  stopPlayback();
   const btn = document.getElementById('btn-tile');
   const NM = ['C','C#','D','Eb','E','F','F#','G','Ab','A','Bb','B'];
+  const growing = _growMode && _themeRiffCount > 0 && project?.sectionOrder?.length;
+
+  // Growing extends the sequence live, so it must NOT interrupt playback. Every
+  // other path (first load, replace-riff) resets the transport as before.
+  if (!growing) stopPlayback();
 
   if (_themeRiffCount === 0) {
     project = makeThemeProject();
@@ -3815,15 +3819,17 @@ function themeButton() {
       applyFxStyleToTracks(Object.values(sec.tracks));
   const fxNote = _growUseAllTracksFx ? (style ? ' · 🧷FX' : ' · 🧷FX(none pinned→default)') : '';
 
-  const canGrow = _growMode && project?.sectionOrder?.length;
   const riffN = _themeRiffCount; // 1-based count of riffs so far
   _themeRiffCount++;
 
-  if (canGrow) {
-    const firstNew = appendRiffSections(riff, `r${riffN}`);
-    if (firstNew) activeSectionId = firstNew;
-    refreshAfterThemeLoad(
-      `${el.emoji} Grew +${riff.sectionOrder.length} sections: ${el.name} · key ${NM[el.rootPc]} · ${orch}${fxNote}`);
+  if (growing) {
+    const wasPlaying = isPlaying;
+    appendRiffSections(riff, `r${riffN}`);
+    // Keep the playhead and section selection exactly where they are. The
+    // scheduler reads sectionOrder live, so playback rolls into the appended
+    // sections on its own; growRefresh only preloads their voices + redraws.
+    growRefresh(
+      `${el.emoji} Grew +${riff.sectionOrder.length} sections: ${el.name} · key ${NM[el.rootPc]} · ${orch}${fxNote}${wasPlaying?' · still playing →':''}`);
   } else {
     project = riff;
     activeSectionId = project.sectionOrder[0];
@@ -3832,6 +3838,22 @@ function themeButton() {
   }
   btn.textContent = `${el.emoji} Riff Theme`;
   btn.style.background = el.color; btn.style.color = '#fff'; btn.style.borderColor = el.color;
+}
+
+// Refresh after a grow without touching the transport: preload the appended
+// sections' sampled voices (so they don't play silent on first pass), redraw,
+// and persist — but never stopPlayback / rebuildEngines / reset the playhead.
+// New tracks get their engines lazily via getOrCreateEngine when reached.
+function growRefresh(statusMsg) {
+  document.getElementById('bpm-input').value = project.tempo;
+  for (const sec of Object.values(project.sections))
+    for (const t of Object.values(sec.tracks))
+      if (SAMPLE_INSTRUMENT_BY_ID[t.instrument]) ensureSampleInstrumentLoaded(t);
+  renderTrackHeaders(); renderSectionUI(); syncMasterStrip();
+  PR.gridDirty = true; PR.dirty = true; schedRedraw();
+  saveProject();
+  const buildTag = document.getElementById('build-tag');
+  setStatus(`${statusMsg} · [${buildTag?buildTag.textContent:'?'}]`);
 }
 
 function toggleGrowMode() {
