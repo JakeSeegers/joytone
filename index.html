@@ -293,10 +293,10 @@ input[type=range]{cursor:pointer}
     <button id="btn-library" title="Browse MIDI library">📚 Library</button>
     <button id="btn-gen-chords" title="Generate chord progression (cycles: walkdown → ii-V → deceptive → twist)">🎲 Chords</button>
     <button id="btn-tile" title="Load the Five Elements theme — then click again to riff on it (transpose / re-orchestrate / re-tempo)" style="font-weight:600">☯ Load Theme</button>
-    <select id="track-menu" title="Jump to any track in the song to adjust its settings (then Save State / Download to set per-track defaults)" style="font-size:11px;max-width:150px;padding:2px 4px"></select>
+    <select id="gen-menu" title="Pick a specific generation (godai element × orchestration) instead of a random riff" style="font-size:11px;max-width:170px;padding:2px 4px"></select>
     <button id="btn-grow" title="Grow mode: when ON, Riff Theme appends the new riff to the END of the sequence instead of replacing it" style="font-weight:600">🌱 Grow: Off</button>
     <button id="btn-grow-fx" title="When generating a riff, use the current 🧷 All-Tracks FX (pin one first) or the theme's default FX" style="font-weight:600">🎛 FX: Default</button>
-    <span id="build-tag" title="Generator build — confirms which code is loaded" style="font-size:11px;font-weight:600;color:#7e57c2;border:1px solid #7e57c2;border-radius:6px;padding:1px 6px;align-self:center">theme-centerpiece b17</span>
+    <span id="build-tag" title="Generator build — confirms which code is loaded" style="font-size:11px;font-weight:600;color:#7e57c2;border:1px solid #7e57c2;border-radius:6px;padding:1px 6px;align-self:center">theme-centerpiece b18</span>
     <button id="btn-load-demo" title="Load demo song">★ Demo</button>
     <button id="btn-reset" title="Clear saved state and start fresh" style="color:#f88">⊘ Reset</button>
   </div>
@@ -2703,47 +2703,6 @@ function renderSectionUI() {
     orderDiv.appendChild(item);
   });
   updatePlayingSectionHighlight();
-  populateTrackMenu();
-}
-
-// Fill the track-jump dropdown with every unique track label across the song.
-// Selecting one jumps to a section containing it and selects it for editing.
-function populateTrackMenu() {
-  const sel = document.getElementById('track-menu');
-  if (!sel) return;
-  const seen = new Set(), labels = [];
-  for (const id of project.sectionOrder || [])
-    for (const t of Object.values(project.sections[id]?.tracks || {}))
-      if (t.label && !seen.has(t.label)) { seen.add(t.label); labels.push(t.label); }
-  const at = activeTracks();
-  const curLabel = (selectedTrackId && at[selectedTrackId]) ? (at[selectedTrackId].label || '') : '';
-  sel.innerHTML = '';
-  const ph = document.createElement('option');
-  ph.value = ''; ph.textContent = labels.length ? '🎚 Track…' : '(no tracks)';
-  sel.appendChild(ph);
-  for (const lab of labels) {
-    const o = document.createElement('option');
-    o.value = lab; o.textContent = lab;
-    sel.appendChild(o);
-  }
-  sel.value = labels.includes(curLabel) ? curLabel : '';
-}
-
-function jumpToTrackByLabel(label) {
-  if (!label) return;
-  const order = [activeSectionId, ...(project.sectionOrder || []).filter(s => s !== activeSectionId)];
-  let secId = null, trackId = null;
-  for (const sid of order) {
-    const sec = project.sections[sid]; if (!sec) continue;
-    const t = Object.values(sec.tracks).find(t => t.label === label);
-    if (t) { secId = sid; trackId = t.id; break; }
-  }
-  if (!trackId) return;
-  if (secId !== activeSectionId) switchSection(secId);
-  selectTrack(trackId, { render: true });
-  const card = document.querySelector('.track-card[data-track-id="' + trackId + '"]');
-  if (card) card.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-  setStatus(`Selected "${label}" — adjust its FX/volume, then Save State / Download to set defaults`);
 }
 
 function switchSection(id) {
@@ -3918,62 +3877,98 @@ function appendRiffSections(riff, tag) {
   return first;
 }
 
-// Button: first press loads the real theme; each press after riffs on it.
-// Grow mode appends the riff instead of replacing; the FX toggle decides whether
-// the riff's tracks adopt the pinned 🧷 All-Tracks FX or the theme default.
-function themeButton() {
+const NOTE_NAMES = ['C','C#','D','Eb','E','F','F#','G','Ab','A','Bb','B'];
+
+// Apply ONE specific theme variation ("generation"): transpose to the element's
+// key, re-orchestrate (orch=null keeps the baked instruments), then grow-or-
+// replace per the current Grow mode + FX toggle. Both the random Riff button and
+// the generation menu route through here.
+function applyThemeVariation(el, orch) {
   const btn = document.getElementById('btn-tile');
-  const NM = ['C','C#','D','Eb','E','F','F#','G','Ab','A','Bb','B'];
   const growing = _growMode && _themeRiffCount > 0 && project?.sectionOrder?.length;
 
-  // Growing extends the sequence live, so it must NOT interrupt playback. Every
-  // other path (first load, replace-riff) resets the transport as before.
+  // Growing extends the sequence live, so it must NOT interrupt playback.
   if (!growing) stopPlayback();
 
-  if (_themeRiffCount === 0) {
-    project = makeThemeProject();
-    _themeRiffCount = 1;
-    activeSectionId = project.sectionOrder[0];
-    refreshAfterThemeLoad('☯ Theme loaded — the real thing · 94 BPM · D miyako-bushi');
-    btn.textContent = '☯ Riff Theme';
-    btn.style.background = '#311b92'; btn.style.color = '#fff'; btn.style.borderColor = '#311b92';
-    btn.title = 'Riff on the theme — transpose, re-orchestrate, re-tempo';
-    return;
-  }
-
-  // Riff: a random godai element supplies the key / palette lens (tempo stays 94).
-  const el    = pickRandomElement();
   const delta = ((el.rootPc - THEME_DATA.rootPc + 18) % 12) - 6; // nearest, within ±6
-  const orch  = ['eastern','soft','synth'][(Math.random()*3)|0];
   const riff  = makeThemeProject({ transpose:delta, orch });
 
-  // FX source: the pinned 🧷 All-Tracks style, or the baked theme default
-  // (already on the riff from makeThemeProject).
+  // FX source: the pinned 🧷 All-Tracks style, or the baked theme default.
   const style = _growUseAllTracksFx ? activeFxStyle() : null;
   if (style)
     for (const sec of Object.values(riff.sections))
       applyFxStyleToTracks(Object.values(sec.tracks));
-  const fxNote = _growUseAllTracksFx ? (style ? ' · 🧷FX' : ' · 🧷FX(none pinned→default)') : '';
+  const fxNote   = _growUseAllTracksFx ? (style ? ' · 🧷FX' : ' · 🧷FX(none pinned→default)') : '';
+  const orchName = orch || 'default';
 
-  const riffN = _themeRiffCount; // 1-based count of riffs so far
+  const riffN = _themeRiffCount;
   _themeRiffCount++;
 
   if (growing) {
     const wasPlaying = isPlaying;
     appendRiffSections(riff, `r${riffN}`);
-    // Keep the playhead and section selection exactly where they are. The
-    // scheduler reads sectionOrder live, so playback rolls into the appended
-    // sections on its own; growRefresh only preloads their voices + redraws.
     growRefresh(
-      `${el.emoji} Grew +${riff.sectionOrder.length} sections: ${el.name} · key ${NM[el.rootPc]} · ${orch}${fxNote}${wasPlaying?' · still playing →':''}`);
+      `${el.emoji} Grew +${riff.sectionOrder.length}: ${el.name} · key ${NOTE_NAMES[el.rootPc]} · ${orchName}${fxNote}${wasPlaying?' · still playing →':''}`);
   } else {
     project = riff;
     activeSectionId = project.sectionOrder[0];
     refreshAfterThemeLoad(
-      `${el.emoji} Riff ×${riffN}: ${el.name} · key ${NM[el.rootPc]} · ${project.tempo} BPM · ${orch}${fxNote}`);
+      `${el.emoji} ${el.name} · key ${NOTE_NAMES[el.rootPc]} · ${project.tempo} BPM · ${orchName}${fxNote}`);
   }
   btn.textContent = `${el.emoji} Riff Theme`;
   btn.style.background = el.color; btn.style.color = '#fff'; btn.style.borderColor = el.color;
+}
+
+// Button: first press loads the real theme; each press after riffs on it at RANDOM.
+// (The generation menu beside it picks a specific variation deterministically.)
+function themeButton() {
+  if (_themeRiffCount === 0) {
+    stopPlayback();
+    project = makeThemeProject();
+    _themeRiffCount = 1;
+    activeSectionId = project.sectionOrder[0];
+    refreshAfterThemeLoad('☯ Theme loaded — the real thing · 94 BPM · D miyako-bushi');
+    const btn = document.getElementById('btn-tile');
+    btn.textContent = '☯ Riff Theme';
+    btn.style.background = '#311b92'; btn.style.color = '#fff'; btn.style.borderColor = '#311b92';
+    btn.title = 'Riff on the theme — transpose, re-orchestrate (random). Use the menu to pick a specific one.';
+    return;
+  }
+  const el   = pickRandomElement();
+  const orch = ['eastern','soft','synth'][(Math.random()*3)|0];
+  applyThemeVariation(el, orch);
+}
+
+// Every potential generation: the original, plus each godai element × each
+// orchestration palette — exactly the space the random Riff button draws from.
+const THEME_GEN_ELEMENTS = ['earth','water','fire','wind','void','catacomb','chip'];
+function buildGenerationList() {
+  const list = [{
+    key:'__original__', label:'☯ Theme — original (D, baked)',
+    el:{ emoji:'☯', name:'Theme (original)', color:'#311b92', rootPc:THEME_DATA.rootPc }, orch:null,
+  }];
+  for (const ek of THEME_GEN_ELEMENTS) {
+    const e = ELEMENTS[ek];
+    for (const o of ['eastern','soft','synth'])
+      list.push({ key:`${ek}|${o}`, label:`${e.emoji} ${e.name} (${NOTE_NAMES[e.rootPc]}) · ${o}`, el:e, orch:o });
+  }
+  return list;
+}
+const GENERATIONS = buildGenerationList();
+
+function populateGenMenu() {
+  const sel = document.getElementById('gen-menu');
+  if (!sel) return;
+  sel.innerHTML = '';
+  const ph = document.createElement('option');
+  ph.value = ''; ph.textContent = '🎲 Pick generation…';
+  sel.appendChild(ph);
+  for (const g of GENERATIONS) {
+    const o = document.createElement('option');
+    o.value = g.key; o.textContent = g.label;
+    sel.appendChild(o);
+  }
+  sel.value = '';
 }
 
 // Refresh after a grow without touching the transport: preload the appended
@@ -5463,7 +5458,11 @@ async function openLibrary() {
 
 document.getElementById('btn-library').addEventListener('click', openLibrary);
 document.getElementById('btn-tile').addEventListener('click', themeButton);
-document.getElementById('track-menu').addEventListener('change', e => jumpToTrackByLabel(e.target.value));
+document.getElementById('gen-menu').addEventListener('change', e => {
+  const g = GENERATIONS.find(x => x.key === e.target.value);
+  e.target.value = '';   // reset so re-picking the same generation fires again
+  if (g) applyThemeVariation(g.el, g.orch);
+});
 document.getElementById('btn-grow').addEventListener('click', toggleGrowMode);
 document.getElementById('btn-grow-fx').addEventListener('click', toggleGrowFx);
 document.getElementById('btn-gen-chords').addEventListener('click', () => {
@@ -5646,6 +5645,7 @@ function init() {
   renderTrackHeaders();
   renderSectionUI();
   renderFxSnapshotUI();
+  populateGenMenu();
   updateAddDrumsButton();
 
   // Initial piano roll scroll — center on MIDI ~60-72 range
