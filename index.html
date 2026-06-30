@@ -289,7 +289,9 @@ input[type=range]{cursor:pointer}
     <button id="btn-library" title="Browse MIDI library">📚 Library</button>
     <button id="btn-gen-chords" title="Generate chord progression (cycles: walkdown → ii-V → deceptive → twist)">🎲 Chords</button>
     <button id="btn-tile" title="Load the Five Elements theme — then click again to riff on it (transpose / re-orchestrate / re-tempo)" style="font-weight:600">☯ Load Theme</button>
-    <span id="build-tag" title="Generator build — confirms which code is loaded" style="font-size:11px;font-weight:600;color:#7e57c2;border:1px solid #7e57c2;border-radius:6px;padding:1px 6px;align-self:center">theme-centerpiece b8</span>
+    <button id="btn-grow" title="Grow mode: when ON, Riff Theme appends the new riff to the END of the sequence instead of replacing it" style="font-weight:600">🌱 Grow: Off</button>
+    <button id="btn-grow-fx" title="When generating a riff, use the current 🧷 All-Tracks FX (pin one first) or the theme's default FX" style="font-weight:600">🎛 FX: Default</button>
+    <span id="build-tag" title="Generator build — confirms which code is loaded" style="font-size:11px;font-weight:600;color:#7e57c2;border:1px solid #7e57c2;border-radius:6px;padding:1px 6px;align-self:center">theme-centerpiece b9</span>
     <button id="btn-load-demo" title="Load demo song">★ Demo</button>
     <button id="btn-reset" title="Clear saved state and start fresh" style="color:#f88">⊘ Reset</button>
   </div>
@@ -3761,8 +3763,28 @@ function refreshAfterThemeLoad(statusMsg) {
 }
 
 let _themeRiffCount = 0;
+let _growMode = false;            // ON: Riff Theme appends to the end instead of replacing
+let _growUseAllTracksFx = false;  // ON: appended riffs adopt the pinned 🧷 All-Tracks FX
+
+// Append a riff's sections to the end of the current sequence. Section ids are
+// suffixed so they stay unique; track objects keep their own uids. Returns the
+// id of the first appended section (so we can jump the view to it).
+function appendRiffSections(riff, tag) {
+  let first = null;
+  for (const secId of riff.sectionOrder) {
+    const sec = riff.sections[secId];
+    const newId = `${secId} ${tag}`;
+    sec.id = newId; sec.label = newId;
+    project.sections[newId] = sec;
+    project.sectionOrder.push(newId);
+    if (!first) first = newId;
+  }
+  return first;
+}
 
 // Button: first press loads the real theme; each press after riffs on it.
+// Grow mode appends the riff instead of replacing; the FX toggle decides whether
+// the riff's tracks adopt the pinned 🧷 All-Tracks FX or the theme default.
 function themeButton() {
   stopPlayback();
   const btn = document.getElementById('btn-tile');
@@ -3779,19 +3801,57 @@ function themeButton() {
     return;
   }
 
-  // Riff: a random godai element supplies the key / tempo / palette lens.
+  // Riff: a random godai element supplies the key / palette lens (tempo stays 94).
   const el    = pickRandomElement();
   const delta = ((el.rootPc - THEME_DATA.rootPc + 18) % 12) - 6; // nearest, within ±6
   const orch  = ['eastern','soft','synth'][(Math.random()*3)|0];
-  // Tempo stays at the theme's own 94 BPM — riffs are variations of one piece,
-  // so they share its pulse; only key and orchestration change.
-  project = makeThemeProject({ transpose:delta, orch });
+  const riff  = makeThemeProject({ transpose:delta, orch });
+
+  // FX source: the pinned 🧷 All-Tracks style, or the baked theme default
+  // (already on the riff from makeThemeProject).
+  const style = _growUseAllTracksFx ? activeFxStyle() : null;
+  if (style)
+    for (const sec of Object.values(riff.sections))
+      applyFxStyleToTracks(Object.values(sec.tracks));
+  const fxNote = _growUseAllTracksFx ? (style ? ' · 🧷FX' : ' · 🧷FX(none pinned→default)') : '';
+
+  const canGrow = _growMode && project?.sectionOrder?.length;
+  const riffN = _themeRiffCount; // 1-based count of riffs so far
   _themeRiffCount++;
-  activeSectionId = project.sectionOrder[0];
-  refreshAfterThemeLoad(
-    `${el.emoji} Riff ×${_themeRiffCount-1}: ${el.name} · key ${NM[el.rootPc]} · ${project.tempo} BPM · ${orch}`);
+
+  if (canGrow) {
+    const firstNew = appendRiffSections(riff, `r${riffN}`);
+    if (firstNew) activeSectionId = firstNew;
+    refreshAfterThemeLoad(
+      `${el.emoji} Grew +${riff.sectionOrder.length} sections: ${el.name} · key ${NM[el.rootPc]} · ${orch}${fxNote}`);
+  } else {
+    project = riff;
+    activeSectionId = project.sectionOrder[0];
+    refreshAfterThemeLoad(
+      `${el.emoji} Riff ×${riffN}: ${el.name} · key ${NM[el.rootPc]} · ${project.tempo} BPM · ${orch}${fxNote}`);
+  }
   btn.textContent = `${el.emoji} Riff Theme`;
   btn.style.background = el.color; btn.style.color = '#fff'; btn.style.borderColor = el.color;
+}
+
+function toggleGrowMode() {
+  _growMode = !_growMode;
+  const b = document.getElementById('btn-grow');
+  b.textContent = _growMode ? '🌱 Grow: On' : '🌱 Grow: Off';
+  b.classList.toggle('on', _growMode);
+  setStatus(_growMode
+    ? '🌱 Grow mode ON — Riff Theme now appends to the end of the sequence'
+    : 'Grow mode off — Riff Theme replaces the sequence');
+}
+
+function toggleGrowFx() {
+  _growUseAllTracksFx = !_growUseAllTracksFx;
+  const b = document.getElementById('btn-grow-fx');
+  b.textContent = _growUseAllTracksFx ? '🎛 FX: All-Tracks' : '🎛 FX: Default';
+  b.classList.toggle('on', _growUseAllTracksFx);
+  setStatus(_growUseAllTracksFx
+    ? 'Generated riffs will adopt the current 🧷 All-Tracks FX (pin one first)'
+    : 'Generated riffs will use the theme default FX');
 }
 
 
@@ -5216,6 +5276,8 @@ async function openLibrary() {
 
 document.getElementById('btn-library').addEventListener('click', openLibrary);
 document.getElementById('btn-tile').addEventListener('click', themeButton);
+document.getElementById('btn-grow').addEventListener('click', toggleGrowMode);
+document.getElementById('btn-grow-fx').addEventListener('click', toggleGrowFx);
 document.getElementById('btn-gen-chords').addEventListener('click', () => {
   const style = HARM_STYLES[harmStyleIdx % HARM_STYLES.length];
   const rootPc = detectSectionRootPc(activeSectionId);
