@@ -291,7 +291,7 @@ input[type=range]{cursor:pointer}
     <button id="btn-tile" title="Load the Five Elements theme — then click again to riff on it (transpose / re-orchestrate / re-tempo)" style="font-weight:600">☯ Load Theme</button>
     <button id="btn-grow" title="Grow mode: when ON, Riff Theme appends the new riff to the END of the sequence instead of replacing it" style="font-weight:600">🌱 Grow: Off</button>
     <button id="btn-grow-fx" title="When generating a riff, use the current 🧷 All-Tracks FX (pin one first) or the theme's default FX" style="font-weight:600">🎛 FX: Default</button>
-    <span id="build-tag" title="Generator build — confirms which code is loaded" style="font-size:11px;font-weight:600;color:#7e57c2;border:1px solid #7e57c2;border-radius:6px;padding:1px 6px;align-self:center">theme-centerpiece b12</span>
+    <span id="build-tag" title="Generator build — confirms which code is loaded" style="font-size:11px;font-weight:600;color:#7e57c2;border:1px solid #7e57c2;border-radius:6px;padding:1px 6px;align-self:center">theme-centerpiece b13</span>
     <button id="btn-load-demo" title="Load demo song">★ Demo</button>
     <button id="btn-reset" title="Clear saved state and start fresh" style="color:#f88">⊘ Reset</button>
   </div>
@@ -431,8 +431,11 @@ const RULER_H     = 24;   // px — time ruler height
 const ROW_H       = 14;   // px default row height (one semitone)
 const MIDI_MIN    = 21;   // A0
 const MIDI_MAX    = 108;  // C8
-const LOOKAHEAD   = 0.1;  // seconds scheduler looks ahead
-const SCHED_MS    = 25;   // scheduler interval ms
+const LOOKAHEAD   = 0.3;  // seconds scheduler looks ahead — wider buffer so a
+                         // brief main-thread stall (opening a panel) or focus
+                         // change doesn't starve the scheduler into a dropout.
+                         // Kept modest so live note triggering stays responsive.
+const SCHED_MS    = 25;   // scheduler interval ms (frequent ticks = fast recovery)
 const PPQ         = 480;  // pulses per quarter note
 
 const INSTRUMENTS = [
