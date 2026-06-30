@@ -291,7 +291,7 @@ input[type=range]{cursor:pointer}
     <button id="btn-tile" title="Load the Five Elements theme — then click again to riff on it (transpose / re-orchestrate / re-tempo)" style="font-weight:600">☯ Load Theme</button>
     <button id="btn-grow" title="Grow mode: when ON, Riff Theme appends the new riff to the END of the sequence instead of replacing it" style="font-weight:600">🌱 Grow: Off</button>
     <button id="btn-grow-fx" title="When generating a riff, use the current 🧷 All-Tracks FX (pin one first) or the theme's default FX" style="font-weight:600">🎛 FX: Default</button>
-    <span id="build-tag" title="Generator build — confirms which code is loaded" style="font-size:11px;font-weight:600;color:#7e57c2;border:1px solid #7e57c2;border-radius:6px;padding:1px 6px;align-self:center">theme-centerpiece b11</span>
+    <span id="build-tag" title="Generator build — confirms which code is loaded" style="font-size:11px;font-weight:600;color:#7e57c2;border:1px solid #7e57c2;border-radius:6px;padding:1px 6px;align-self:center">theme-centerpiece b12</span>
     <button id="btn-load-demo" title="Load demo song">★ Demo</button>
     <button id="btn-reset" title="Clear saved state and start fresh" style="color:#f88">⊘ Reset</button>
   </div>
@@ -574,7 +574,8 @@ function buildBitCrushCurve(bits) {
   return curve;
 }
 
-let masterBus     = null;     // GainNode — compressor chain end → here
+let masterBus     = null;     // GainNode — unity sum into the dynamics chain
+let masterOut     = null;     // GainNode — VOL: final output trim AFTER comp/limiter/derez
 let sharedReverb  = null;     // ConvolverNode
 let sharedDelay   = null;     // DelayNode
 let reverbReturn  = null;     // GainNode
@@ -867,7 +868,8 @@ async function ensureAudio() {
   outputLimiter.knee.value = 0; outputLimiter.attack.value = 0.001; outputLimiter.release.value = 0.05;
 
   masterBus = audioCtx.createGain();
-  masterBus.gain.value = project.masterFx.masterVolume;
+  masterBus.gain.value = 1.0; // unity sum — the compressor/limiter act on the full mix
+  // (consistent loudness regardless of VOL); VOL is the post-chain trim (masterOut).
 
   // Bass boost (low-shelf EQ) sits between masterBus and compressor
   bassBoost = audioCtx.createBiquadFilter();
@@ -909,8 +911,14 @@ async function ensureAudio() {
     outputLimiter.connect(derezCrusher);
     derezCrusher.connect(derezFilter);
     derezFilter.connect(derezWetGain);
-    derezDryGain.connect(audioCtx.destination);
-    derezWetGain.connect(audioCtx.destination);
+
+    // Final output trim — VOL lives here, after every dynamics/colour stage, so
+    // it's a true linear output level the compressor can't fight.
+    masterOut = audioCtx.createGain();
+    masterOut.gain.value = project.masterFx.masterVolume;
+    derezDryGain.connect(masterOut);
+    derezWetGain.connect(masterOut);
+    masterOut.connect(audioCtx.destination);
   }
 
   // Tape hiss routes AFTER compressor so loud notes don't pump it
@@ -4513,12 +4521,13 @@ async function bounceWav() {
   const oRvRet  = oCtx.createGain(); oRvRet.gain.value = 0.5; oReverb.connect(oRvRet);
   const oDlRet  = oCtx.createGain(); oDlRet.gain.value = 0.4; oDelay.connect(oDlRet);
   const oComp   = oCtx.createDynamicsCompressor();
-  oComp.threshold.value=-18; oComp.ratio.value=6; oComp.knee.value=8;
+  oComp.threshold.value=project.masterFx.compThreshold ?? -18; oComp.ratio.value=project.masterFx.compRatio ?? 6; oComp.knee.value=8;
   const oLim    = oCtx.createDynamicsCompressor();
-  oLim.threshold.value=-3; oLim.ratio.value=20; oLim.knee.value=0; oLim.attack.value=0.001; oLim.release.value=0.05;
-  const oBus    = oCtx.createGain(); oBus.gain.value = project.masterFx.masterVolume;
+  oLim.threshold.value=project.masterFx.limiterCeiling ?? -1; oLim.ratio.value=20; oLim.knee.value=0; oLim.attack.value=0.001; oLim.release.value=0.05;
+  const oBus    = oCtx.createGain(); oBus.gain.value = 1.0;                              // unity into the dynamics
+  const oOut    = oCtx.createGain(); oOut.gain.value = project.masterFx.masterVolume;    // VOL: post-dynamics output trim
   oRvRet.connect(oComp); oDlRet.connect(oComp); oBus.connect(oComp);
-  oComp.connect(oLim); oLim.connect(oCtx.destination);
+  oComp.connect(oLim); oLim.connect(oOut); oOut.connect(oCtx.destination);
 
   // Schedule all sections
   let tOffset = 0;
@@ -4755,7 +4764,7 @@ function applyMasterFxToAudio(timeConstant=0.05) {
   if (!audioCtx || !project?.masterFx) return;
   const fx = project.masterFx;
   const now = audioCtx.currentTime;
-  if (masterBus) masterBus.gain.setTargetAtTime(fx.masterVolume, now, timeConstant);
+  if (masterOut) masterOut.gain.setTargetAtTime(fx.masterVolume, now, timeConstant);
   if (bassBoost) {
     bassBoost.frequency.setTargetAtTime(fx.bassFreq ?? 120, now, timeConstant);
     bassBoost.gain.setTargetAtTime(fx.bassGain ?? 0, now, timeConstant);
@@ -5094,7 +5103,7 @@ document.getElementById('mc-vol').addEventListener('input', async e => {
   document.getElementById('mc-vol-val').textContent = v.toFixed(2);
   project.masterFx.masterVolume = v;
   await ensureAudio();
-  if (masterBus) masterBus.gain.setTargetAtTime(v, audioCtx.currentTime, 0.02);
+  if (masterOut) masterOut.gain.setTargetAtTime(v, audioCtx.currentTime, 0.02);
   saveProject();
 });
 document.getElementById('mc-bass').addEventListener('input', async e => {
