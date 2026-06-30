@@ -293,9 +293,10 @@ input[type=range]{cursor:pointer}
     <button id="btn-library" title="Browse MIDI library">📚 Library</button>
     <button id="btn-gen-chords" title="Generate chord progression (cycles: walkdown → ii-V → deceptive → twist)">🎲 Chords</button>
     <button id="btn-tile" title="Load the Five Elements theme — then click again to riff on it (transpose / re-orchestrate / re-tempo)" style="font-weight:600">☯ Load Theme</button>
+    <select id="track-menu" title="Jump to any track in the song to adjust its settings (then Save State / Download to set per-track defaults)" style="font-size:11px;max-width:150px;padding:2px 4px"></select>
     <button id="btn-grow" title="Grow mode: when ON, Riff Theme appends the new riff to the END of the sequence instead of replacing it" style="font-weight:600">🌱 Grow: Off</button>
     <button id="btn-grow-fx" title="When generating a riff, use the current 🧷 All-Tracks FX (pin one first) or the theme's default FX" style="font-weight:600">🎛 FX: Default</button>
-    <span id="build-tag" title="Generator build — confirms which code is loaded" style="font-size:11px;font-weight:600;color:#7e57c2;border:1px solid #7e57c2;border-radius:6px;padding:1px 6px;align-self:center">theme-centerpiece b16</span>
+    <span id="build-tag" title="Generator build — confirms which code is loaded" style="font-size:11px;font-weight:600;color:#7e57c2;border:1px solid #7e57c2;border-radius:6px;padding:1px 6px;align-self:center">theme-centerpiece b17</span>
     <button id="btn-load-demo" title="Load demo song">★ Demo</button>
     <button id="btn-reset" title="Clear saved state and start fresh" style="color:#f88">⊘ Reset</button>
   </div>
@@ -2702,6 +2703,47 @@ function renderSectionUI() {
     orderDiv.appendChild(item);
   });
   updatePlayingSectionHighlight();
+  populateTrackMenu();
+}
+
+// Fill the track-jump dropdown with every unique track label across the song.
+// Selecting one jumps to a section containing it and selects it for editing.
+function populateTrackMenu() {
+  const sel = document.getElementById('track-menu');
+  if (!sel) return;
+  const seen = new Set(), labels = [];
+  for (const id of project.sectionOrder || [])
+    for (const t of Object.values(project.sections[id]?.tracks || {}))
+      if (t.label && !seen.has(t.label)) { seen.add(t.label); labels.push(t.label); }
+  const at = activeTracks();
+  const curLabel = (selectedTrackId && at[selectedTrackId]) ? (at[selectedTrackId].label || '') : '';
+  sel.innerHTML = '';
+  const ph = document.createElement('option');
+  ph.value = ''; ph.textContent = labels.length ? '🎚 Track…' : '(no tracks)';
+  sel.appendChild(ph);
+  for (const lab of labels) {
+    const o = document.createElement('option');
+    o.value = lab; o.textContent = lab;
+    sel.appendChild(o);
+  }
+  sel.value = labels.includes(curLabel) ? curLabel : '';
+}
+
+function jumpToTrackByLabel(label) {
+  if (!label) return;
+  const order = [activeSectionId, ...(project.sectionOrder || []).filter(s => s !== activeSectionId)];
+  let secId = null, trackId = null;
+  for (const sid of order) {
+    const sec = project.sections[sid]; if (!sec) continue;
+    const t = Object.values(sec.tracks).find(t => t.label === label);
+    if (t) { secId = sid; trackId = t.id; break; }
+  }
+  if (!trackId) return;
+  if (secId !== activeSectionId) switchSection(secId);
+  selectTrack(trackId, { render: true });
+  const card = document.querySelector('.track-card[data-track-id="' + trackId + '"]');
+  if (card) card.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  setStatus(`Selected "${label}" — adjust its FX/volume, then Save State / Download to set defaults`);
 }
 
 function switchSection(id) {
@@ -5421,6 +5463,7 @@ async function openLibrary() {
 
 document.getElementById('btn-library').addEventListener('click', openLibrary);
 document.getElementById('btn-tile').addEventListener('click', themeButton);
+document.getElementById('track-menu').addEventListener('change', e => jumpToTrackByLabel(e.target.value));
 document.getElementById('btn-grow').addEventListener('click', toggleGrowMode);
 document.getElementById('btn-grow-fx').addEventListener('click', toggleGrowFx);
 document.getElementById('btn-gen-chords').addEventListener('click', () => {
