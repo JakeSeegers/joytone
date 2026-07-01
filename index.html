@@ -1062,7 +1062,12 @@ class TrackEngine {
 
     this.eqHigh = ctx.createBiquadFilter();
     this.eqHigh.type = 'highshelf';
-    this.eqHigh.frequency.value = 6000;
+    // Most built-in voices (piano/flute/synth/organ/bass) have their own
+    // internal lowpass baked into the note generator that kills everything
+    // above ~1-3.5kHz, so a shelf corner at 6000Hz had almost nothing left
+    // to boost/cut. 800Hz sits below those internal cutoffs so the control
+    // actually moves the level.
+    this.eqHigh.frequency.value = 800;
     this.eqHigh.gain.value = track.effects.eqHighGain ?? 0;
 
     this.filter = ctx.createBiquadFilter();
@@ -5647,7 +5652,6 @@ document.getElementById('btn-reset').addEventListener('click', () => {
 document.getElementById('btn-add-track').addEventListener('click', async () => { await ensureAudio(); addTrack(); });
 document.getElementById('btn-add-section').addEventListener('click', addSection);
 document.getElementById('btn-dup-section').addEventListener('click', () => duplicateSection(activeSectionId));
-document.getElementById('btn-add-drums').addEventListener('click', addLastDrums);
 
 // ── INIT ───────────────────────────────────────────────────────────
 function init() {
