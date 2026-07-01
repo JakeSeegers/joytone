@@ -296,7 +296,7 @@ input[type=range]{cursor:pointer}
     <select id="gen-menu" title="Pick a specific generation (godai element × orchestration) instead of a random riff" style="font-size:11px;max-width:170px;padding:2px 4px"></select>
     <button id="btn-grow" title="Grow mode: when ON, Riff Theme appends the new riff to the END of the sequence instead of replacing it" style="font-weight:600">🌱 Grow: Off</button>
     <button id="btn-grow-fx" title="When generating a riff, use the current 🧷 All-Tracks FX (pin one first) or the theme's default FX" style="font-weight:600">🎛 FX: Default</button>
-    <span id="build-tag" title="Generator build — confirms which code is loaded" style="font-size:11px;font-weight:600;color:#7e57c2;border:1px solid #7e57c2;border-radius:6px;padding:1px 6px;align-self:center">theme-centerpiece b22</span>
+    <span id="build-tag" title="Generator build — confirms which code is loaded" style="font-size:11px;font-weight:600;color:#7e57c2;border:1px solid #7e57c2;border-radius:6px;padding:1px 6px;align-self:center">theme-centerpiece b23</span>
     <button id="btn-load-demo" title="Load demo song">★ Demo</button>
     <button id="btn-reset" title="Clear saved state and start fresh" style="color:#f88">⊘ Reset</button>
   </div>
@@ -3811,10 +3811,10 @@ const THEME_MASTER_FX = {"compThreshold":-24,"compRatio":6,"compMakeup":0,"bassG
 // THEME_MASTER_FX — so Load Theme comes up sounding finished, not dry. A riff
 // passes an `orch` palette, which re-voices the 6 melodic instruments on top of
 // the baked FX (the mix character — bright lead, driven kick — is preserved).
-// Turn the drone's static held dyads into a moving Bass Drone: each held chord
-// becomes a gentle half-note pulse cycling root → fifth → root → octave, an
-// octave down (bass register), with a slow swell — so it breathes under the
-// theme instead of sitting on one long chord.
+// Keep the Bass Drone simple and sustained, but let it move harmonically like a
+// slow chord progression (inspired by the 🎲 Chords generator): one long, held
+// bass note per BAR, cycling root → fifth → root — an octave down — so it just
+// shifts underneath the theme instead of sitting on one static chord or pulsing.
 function buildDronePattern(inSec, lo, tr) {
   const byOnset = new Map();
   for (const [b,n,d,v] of inSec) {
@@ -3825,17 +3825,16 @@ function buildDronePattern(inSec, lo, tr) {
   const out = [];
   for (const g of byOnset.values()) {
     const p = g.pitches.slice().sort((a,b)=>a-b);
-    const R = p[0] - 12;                    // root, dropped to bass register
-    const cycle = [R, R+7, R, R+12];        // root, fifth, root, octave
-    const step = 2;                         // half-note pulse
+    const R = p[0] - 12;               // root, dropped to bass register
+    const cycle = [R, R, R+7, R];      // mostly root, a gentle fifth per 4 bars
+    const step = 4;                    // one held note per bar
     let idx = 0;
     for (let bt = 0; bt < g.dur - 0.1; bt += step) {
-      const nd = Math.min(step*0.92, g.dur - bt);
-      const swell = Math.sin((bt / Math.max(g.dur, step)) * Math.PI); // 0→1→0
+      const nd = Math.min(step*0.98, g.dur - bt);  // legato — nearly fills the bar
       out.push({
         id: uid(), beatStart:+(g.start - lo + bt).toFixed(3), duration:+nd.toFixed(3),
         midiNote: cycle[idx % cycle.length] + tr,
-        velocity: clamp(Math.round(46 + 20*swell), 30, 100),
+        velocity: 52,
       });
       idx++;
     }
