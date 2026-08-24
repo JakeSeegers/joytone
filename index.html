@@ -3144,12 +3144,17 @@ const MEL_MOTIFS = [
 const MEL_CADENCE = [{o:0,d:.9},{o:1,d:2.6}];           // approach + long resolution
 
 // ── THEME SEED ──────────────────────────────────────────────────────
-// The game's musical DNA, distilled from the recomposed Five-Elements
-// theme: the miyako-bushi ("in") scale on D — D Eb G A Bb — plus three
-// hummable hooks lifted from the lead lines. When a seed is passed to
-// generateMelodyNotes() the line is built from THIS collection (semitones
-// and all — the Eb→D "sigh" is the whole point) and the hooks are planted
-// at salient spots so the tune resurfaces inside otherwise-fresh material.
+// The generator's own leitmotif — NOT derived from any outside source. An
+// earlier version of this file seeded these hooks from a transcription of
+// an existing copyrighted game theme; that transcription (and the hooks
+// lifted from it) has been replaced with original material below. Only
+// the scale survives from that era — miyako-bushi ("in") on D, D Eb G A
+// Bb, a centuries-old Japanese mode, not anyone's copyrightable content —
+// and even that's incidental; any scale would work here.
+//
+// When a seed is passed to generateMelodyNotes() the line is built from
+// THIS collection and the hooks are planted at salient spots so the same
+// original motif resurfaces inside otherwise-fresh generated material.
 //
 // Hooks are stored as collection-degree contours, not fixed pitches, so
 // they re-root into any element's key and stay recognizable (leitmotif
@@ -3158,16 +3163,16 @@ const MEL_CADENCE = [{o:0,d:.9},{o:1,d:2.6}];           // approach + long resol
 const THEME = {
   rootPc: 2,            // D
   scale:  [0,1,5,7,8],  // miyako-bushi / "in": D Eb G A Bb (degrees 0..4)
-  tempo:  126,          // the AoE2-derived march feel (reference; lens keeps element tempo)
+  tempo:  126,          // march feel (reference; lens keeps element tempo)
   hooks: {
-    // The Call — rising 4th D→G, the opening gesture
-    call: { startDeg:0, cell:[ {o:0, d:0.9, step:0}, {o:1, d:1.9, step:+2} ] },
-    // The Turn — repeated-note figure G G G A Bb, lands at the phrase peak
-    turn: { startDeg:2, cell:[ {o:0,   d:0.5, step:0}, {o:0.5, d:0.5, step:0},
-                               {o:1,   d:0.5, step:0}, {o:1.5, d:0.5, step:+1},
-                               {o:2,   d:1.7, step:+2} ] },
-    // The Sigh — the Eb→D semitone fall, used as the answering cadence
-    sigh: { startDeg:1, cell:[ {o:0, d:0.9, step:0}, {o:1, d:2.4, step:-1} ] },
+    // The Rise — a stepwise A→Bb lift, the opening gesture
+    call: { startDeg:3, cell:[ {o:0, d:0.9, step:0}, {o:1, d:1.9, step:+1} ] },
+    // The Coil — a zigzag Bb A Bb G A, lands at the phrase peak
+    turn: { startDeg:4, cell:[ {o:0,   d:0.5, step:0},  {o:0.5, d:0.5, step:-1},
+                               {o:1,   d:0.5, step:0},  {o:1.5, d:0.5, step:-2},
+                               {o:2,   d:1.7, step:-1} ] },
+    // The Fall — a G→D descending 4th to the tonic, the answering cadence
+    sigh: { startDeg:2, cell:[ {o:0, d:0.9, step:0}, {o:1, d:2.4, step:-2} ] },
   },
 };
 
